@@ -1,0 +1,2041 @@
+<!DOCTYPE html>
+<html lang="es" class="h-full">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BAUHAUS 807 - Gestión de Devoluciones</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Alpine.js for reactive UI -->
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+    <!-- FontAwesome for icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Google Fonts Inter & Archivo Black -->
+    <link href="https://fonts.googleapis.com/css2?family=Archivo+Black&family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                        display: ['"Archivo Black"', 'Inter', 'sans-serif'],
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        [x-cloak] { display: none !important; }
+        .bauhaus-shadow-red {
+            box-shadow: 8px 8px 0px #e30613;
+        }
+        .bauhaus-shadow-black {
+            box-shadow: 8px 8px 0px #000000;
+        }
+        .bauhaus-shadow-dark-red {
+            box-shadow: 6px 6px 0px #e30613;
+        }
+        .bauhaus-shadow-sm {
+            box-shadow: 4px 4px 0px #000000;
+        }
+    </style>
+
+    <!-- ===================================================================== -->
+    <!-- INTEGRACIÓN FIREBASE (FIRESTORE + ANALYTICS EN TIEMPO REAL)           -->
+    <!-- ===================================================================== -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-app.js";
+        import { getAnalytics } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-analytics.js";
+        import {
+            getFirestore,
+            doc,
+            setDoc,
+            onSnapshot
+        } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-firestore.js";
+
+        const firebaseConfig = {
+            apiKey: "AIzaSyAfuNF8Boq5lfAvuIR1X5tcxEWZ_jna9RA",
+            authDomain: "devoluciones-eddf6.firebaseapp.com",
+            projectId: "devoluciones-eddf6",
+            storageBucket: "devoluciones-eddf6.firebasestorage.app",
+            messagingSenderId: "69405397236",
+            appId: "1:69405397236:web:2918a6884f604d77810ea1",
+            measurementId: "G-GLLW02XPJF"
+        };
+
+        try {
+            const app = initializeApp(firebaseConfig);
+            const analytics = getAnalytics(app);
+            const db = getFirestore(app);
+
+            // Exponemos el puente de Firebase para Alpine.js
+            window.BauhausFirebase = {
+                db,
+                async saveDoc(docName, payload) {
+                    const ref = doc(db, "bauhaus_807", docName);
+                    await setDoc(ref, {
+                        items: JSON.stringify(payload),
+                        updatedAt: new Date().toISOString()
+                    });
+                },
+                subscribeDoc(docName, onData, onError) {
+                    const ref = doc(db, "bauhaus_807", docName);
+                    return onSnapshot(ref, (snap) => {
+                        if (snap.exists() && snap.data().items) {
+                            try {
+                                onData(JSON.parse(snap.data().items));
+                            } catch (err) {
+                                console.error("Error parseando datos de Firestore:", err);
+                            }
+                        } else {
+                            onData(null);
+                        }
+                    }, (err) => {
+                        console.error("Error de suscripción Firestore:", err);
+                        if (onError) onError(err);
+                    });
+                }
+            };
+
+            window.dispatchEvent(new Event("firebase-ready"));
+        } catch (err) {
+            console.error("Error inicializando Firebase:", err);
+            window.BauhausFirebaseError = err.message;
+            window.dispatchEvent(new Event("firebase-error"));
+        }
+    </script>
+</head>
+<body class="h-full font-sans antialiased transition-colors duration-200"
+      :class="darkMode ? 'bg-[#121212] text-neutral-100' : 'bg-[#f4f4f4] text-neutral-900'"
+      x-data="returnsApp()">
+
+    <!-- ===================================================================== -->
+    <!-- ALERTA PUSH FLOTANTE PARA DEVOLUCIONES PENDIENTES > 5 DÍAS            -->
+    <!-- ===================================================================== -->
+    <div x-show="pushAlerts.show"
+         x-transition:enter="transition ease-out duration-300"
+         x-transition:enter-start="opacity-0 -translate-y-4"
+         x-transition:enter-end="opacity-100 translate-y-0"
+         class="fixed top-5 right-5 z-50 max-w-md bg-[#e30613] text-white border-4 border-black bauhaus-shadow-black p-4 flex items-start gap-3.5 shadow-2xl" x-cloak>
+        <div class="bg-black text-white p-2.5 shrink-0 border-2 border-white">
+            <i class="fa-solid fa-triangle-exclamation text-lg text-amber-400"></i>
+        </div>
+        <div class="flex-1 min-w-0">
+            <div class="flex items-center justify-between gap-2">
+                <h4 class="font-display text-xs uppercase tracking-wider text-black bg-white px-2 py-0.5">Alerta Push: Devoluciones Retrasadas</h4>
+                <button @click="pushAlerts.show = false" class="text-white hover:text-black font-black text-sm">&times;</button>
+            </div>
+            <p class="text-xs font-bold mt-2 leading-snug" x-text="pushAlerts.message"></p>
+            <div class="mt-3 flex items-center gap-2">
+                <button @click="filterEstado = 'Pendiente'; activeTab = 'listado'; pushAlerts.show = false;"
+                        class="bg-black text-white hover:bg-neutral-900 px-3 py-1 text-[10px] font-black uppercase border border-white transition">
+                    Ver Pendientes &rarr;
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ===================================================================== -->
+    <!-- PANTALLA DE ACCESO / LOGIN POR SECCIONES                              -->
+    <!-- ===================================================================== -->
+    <div x-show="!currentUser" class="min-h-screen bg-[#0a0a0a] flex flex-col justify-center items-center p-4 relative overflow-hidden" x-cloak>
+        <div class="absolute top-0 left-0 w-full h-2.5 bg-[#e30613]"></div>
+
+        <div class="max-w-4xl w-full bg-white text-black border-4 border-black bauhaus-shadow-red overflow-hidden z-10">
+            <!-- Cabecera Login con Logo Bauhaus -->
+            <div class="bg-[#0a0a0a] text-white px-6 sm:px-8 py-6 border-b-4 border-[#e30613] flex flex-col sm:flex-row justify-between items-center gap-4">
+                <div class="flex items-center gap-4">
+                    <!-- Logo Oficial Estilizado BAUHAUS -->
+                    <div class="bg-white p-2 border-2 border-black shrink-0">
+                        <div class="bg-[#e30613] text-white px-3 py-1.5 flex items-center gap-2 border border-[#e30613]">
+                            <svg class="w-7 h-5 fill-current" viewBox="0 0 64 40" xmlns="http://www.w3.org/2000/svg">
+                                <polygon points="2,20 12,8 22,20 22,36 2,36" fill="none" stroke="white" stroke-width="3.5"/>
+                                <polygon points="22,20 32,8 42,20 42,36 22,36" fill="none" stroke="white" stroke-width="3.5"/>
+                                <polygon points="42,20 52,8 62,20 62,36 42,36" fill="none" stroke="white" stroke-width="3.5"/>
+                            </svg>
+                            <span class="font-display tracking-tighter text-xl leading-none">BAUHAUS</span>
+                        </div>
+                    </div>
+                    <div>
+                        <h1 class="font-display text-xl sm:text-2xl tracking-tight uppercase text-white">Portal de Devoluciones</h1>
+                        <p class="text-neutral-400 text-xs font-medium mt-0.5 uppercase tracking-wider">Control Departamental Centro 807</p>
+                    </div>
+                </div>
+                <div class="text-right flex flex-col items-end gap-1.5">
+                    <span class="inline-block bg-black border-2 border-neutral-700 text-white text-xs font-bold uppercase px-3 py-1.5">
+                        <i class="fa-solid fa-shield-halved text-[#e30613] mr-1.5"></i> Acceso Seguro 807
+                    </span>
+                    <span class="inline-flex items-center gap-1.5 text-[10px] font-black uppercase px-2.5 py-0.5 border"
+                          :class="cloudStatus === 'connected' ? 'bg-emerald-950 text-emerald-400 border-emerald-600' : (cloudStatus === 'error' ? 'bg-red-950 text-red-400 border-red-600' : 'bg-amber-950 text-amber-300 border-amber-600')">
+                        <i class="fa-solid" :class="cloudStatus === 'connected' ? 'fa-cloud-check' : (cloudStatus === 'error' ? 'fa-cloud-exclamation' : 'fa-rotate fa-spin')"></i>
+                        <span x-text="cloudStatus === 'connected' ? 'Nube Firebase Activa' : (cloudStatus === 'error' ? 'Modo Local (Sin Red)' : 'Conectando Firebase...')"></span>
+                    </span>
+                </div>
+            </div>
+
+            <!-- Cuerpo Login -->
+            <div class="p-6 sm:p-8 space-y-6 bg-[#f4f4f4]">
+                <!-- Grid de Secciones -->
+                <div>
+                    <label class="block text-xs font-black uppercase tracking-wider text-black mb-3">1. Selecciona tu Sección o Perfil de Administración</label>
+                    <div class="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                        <template x-for="sec in sectionsConfig" :key="sec.id">
+                            <button type="button"
+                                @click="selectLoginSection(sec)"
+                                :class="selectedLoginSec && selectedLoginSec.id === sec.id 
+                                    ? 'bg-black text-white border-black bauhaus-shadow-red -translate-x-0.5 -translate-y-0.5' 
+                                    : 'bg-white hover:bg-neutral-100 text-black border-black'"
+                                class="p-3.5 border-2 text-left transition-all flex items-center gap-3 group">
+                                <div :class="selectedLoginSec && selectedLoginSec.id === sec.id ? sec.activeIconBg : sec.iconBg"
+                                     class="w-10 h-10 border border-black flex items-center justify-center text-lg shrink-0 transition-transform duration-200 group-hover:scale-105">
+                                    <i class="fa-solid" :class="sec.icon"></i>
+                                </div>
+                                <div class="min-w-0">
+                                    <p class="font-black text-xs sm:text-sm uppercase truncate" x-text="sec.name"></p>
+                                    <p class="text-[10px] font-semibold uppercase truncate" :class="selectedLoginSec && selectedLoginSec.id === sec.id ? 'text-neutral-300' : 'text-neutral-500'" x-text="sec.id === 'admin' ? 'Acceso Total (PIN)' : (hasSectionPassword(sec.id) ? 'Clave Activa' : 'Primer Acceso')"></p>
+                                </div>
+                            </button>
+                        </template>
+                    </div>
+                </div>
+
+                <!-- Formulario de PIN / Contraseña / Creación en Primer Acceso -->
+                <form @submit.prevent="performLogin()" class="bg-white p-5 border-2 border-black bauhaus-shadow-black space-y-4">
+                    <!-- Caso Admin -->
+                    <template x-if="selectedLoginSec && selectedLoginSec.id === 'admin'">
+                        <div class="flex flex-col sm:flex-row items-center justify-between gap-4">
+                            <div class="w-full flex-1">
+                                <div class="flex items-center justify-between mb-1.5">
+                                    <label class="text-xs font-black uppercase text-black">2. PIN de Administrador</label>
+                                    <span class="text-[10px] bg-[#e30613] text-white px-2 py-0.5 font-bold uppercase">
+                                        Acceso Global Restringido
+                                    </span>
+                                </div>
+                                <div class="relative">
+                                    <span class="absolute inset-y-0 left-0 flex items-center pl-3.5 text-neutral-500">
+                                        <i class="fa-solid fa-key"></i>
+                                    </span>
+                                    <input type="password" x-model="loginPin" placeholder="Introduce el PIN de Administrador" required
+                                           class="w-full pl-10 pr-4 py-2.5 bg-neutral-50 border-2 border-black text-sm font-mono focus:outline-none focus:bg-yellow-50">
+                                </div>
+                            </div>
+                            <div class="w-full sm:w-auto self-end">
+                                <button type="submit" class="w-full sm:w-auto bg-[#e30613] hover:bg-red-700 text-white border-2 border-black px-6 py-2.5 text-xs font-black uppercase tracking-wider transition flex items-center justify-center gap-2">
+                                    <span>Entrar como Admin</span>
+                                    <i class="fa-solid fa-arrow-right"></i>
+                                </button>
+                            </div>
+                        </div>
+                    </template>
+
+                    <!-- Caso Sección Primer Acceso -->
+                    <template x-if="selectedLoginSec && selectedLoginSec.id !== 'admin' && !hasSectionPassword(selectedLoginSec.id)">
+                        <div class="space-y-4">
+                            <div class="bg-amber-100 border-2 border-black p-3 flex items-start gap-2.5">
+                                <i class="fa-solid fa-shield-exclamation text-black mt-0.5"></i>
+                                <div class="text-xs text-black">
+                                    <p class="font-black uppercase">Primer acceso a <span x-text="selectedLoginSec.name"></span></p>
+                                    <p class="mt-0.5 font-medium">Esta sección aún no tiene contraseña registrada. Crea y confirma una clave personal (mínimo 4 caracteres) para proteger tus devoluciones.</p>
+                                </div>
+                            </div>
+                            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                <div>
+                                    <label class="block text-xs font-black uppercase text-black mb-1">Nueva Contraseña *</label>
+                                    <input type="password" x-model="loginNewPass" placeholder="Crea una contraseña" required minlength="4"
+                                           class="w-full px-3.5 py-2.5 bg-neutral-50 border-2 border-black text-sm focus:outline-none focus:bg-yellow-50">
+                                </div>
+                                <div>
+                                    <label class="block text-xs font-black uppercase text-black mb-1">Confirmar Contraseña *</label>
+                                    <input type="password" x-model="loginConfirmPass" placeholder="Repite la contraseña" required minlength="4"
+                                           class="w-full px-3.5 py-2.5 bg-neutral-50 border-2 border-black text-sm focus:outline-none focus:bg-yellow-50">
+                                </div>
+                            </div>
+                            <div class="flex justify-end">
+                                <button type="submit" class="w-full sm:w-auto bg-[#e30613] hover:bg-red-700 text-white border-2 border-black px-6 py-2.5 text-xs font-black uppercase tracking-wider transition flex items-center justify-center gap-2">
+                                    <i class="fa-solid fa-floppy-disk"></i>
+                                    <span>Guardar Contraseña y Entrar</span>
+                                </button>
+                            </div>
+                        </div>
+                    </template>
+
+                    <!-- Caso Sección con Contraseña Guardada -->
+                    <template x-if="selectedLoginSec && selectedLoginSec.id !== 'admin' && hasSectionPassword(selectedLoginSec.id)">
+                        <div class="flex flex-col sm:flex-row items-center justify-between gap-4">
+                            <div class="w-full flex-1">
+                                <div class="flex items-center justify-between mb-1.5">
+                                    <label class="text-xs font-black uppercase text-black">2. Contraseña de <span x-text="selectedLoginSec.name"></span></label>
+                                    <span class="text-[10px] bg-emerald-500 text-black border border-black px-2 py-0.5 font-black uppercase">
+                                        <i class="fa-solid fa-lock mr-1"></i> Clave Protegida
+                                    </span>
+                                </div>
+                                <div class="relative">
+                                    <span class="absolute inset-y-0 left-0 flex items-center pl-3.5 text-neutral-500">
+                                        <i class="fa-solid fa-lock"></i>
+                                    </span>
+                                    <input type="password" x-model="loginPin" placeholder="Introduce la contraseña de la sección" required
+                                           class="w-full pl-10 pr-4 py-2.5 bg-neutral-50 border-2 border-black text-sm focus:outline-none focus:bg-yellow-50">
+                                </div>
+                            </div>
+                            <div class="w-full sm:w-auto self-end">
+                                <button type="submit" class="w-full sm:w-auto bg-[#e30613] hover:bg-red-700 text-white border-2 border-black px-6 py-2.5 text-xs font-black uppercase tracking-wider transition flex items-center justify-center gap-2">
+                                    <span>Entrar a Sección</span>
+                                    <i class="fa-solid fa-arrow-right"></i>
+                                </button>
+                            </div>
+                        </div>
+                    </template>
+
+                    <p x-show="loginError" x-text="loginError" class="text-xs text-[#e30613] font-black uppercase"></p>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- ===================================================================== -->
+    <!-- APLICACIÓN PRINCIPAL (ESTRUCTURA SIDEBAR NEGRA + PANEL BAUHAUS)       -->
+    <!-- ===================================================================== -->
+    <div x-show="currentUser" class="min-h-screen flex flex-col lg:flex-row" x-cloak>
+
+        <!-- BARRA LATERAL IZQUIERDA (SIDEBAR NEGRA #0a0a0a, ANCHO FIJO 260px EN DESKTOP) -->
+        <aside class="w-full lg:w-[260px] bg-[#0a0a0a] text-white shrink-0 flex flex-col justify-between border-b-4 lg:border-b-0 lg:border-r-4 border-black z-30">
+            <div>
+                <!-- Caja Superior Blanca con Logotipo Oficial Estilizado BAUHAUS -->
+                <div class="p-4">
+                    <div class="bg-white p-2.5 border-2 border-black flex items-center justify-center">
+                        <div class="w-full bg-[#e30613] text-white py-2 px-3 flex items-center justify-center gap-2">
+                            <svg class="w-8 h-6 fill-current shrink-0" viewBox="0 0 64 40" xmlns="http://www.w3.org/2000/svg">
+                                <polygon points="2,20 12,8 22,20 22,36 2,36" fill="none" stroke="white" stroke-width="3.5"/>
+                                <polygon points="22,20 32,8 42,20 42,36 22,36" fill="none" stroke="white" stroke-width="3.5"/>
+                                <polygon points="42,20 52,8 62,20 62,36 42,36" fill="none" stroke="white" stroke-width="3.5"/>
+                            </svg>
+                            <span class="font-display tracking-tighter text-2xl leading-none">BAUHAUS</span>
+                        </div>
+                    </div>
+
+                    <!-- Botón TEMA OSCURO / CLARO -->
+                    <button @click="toggleDarkMode()"
+                            class="mt-3 w-full py-2.5 px-3 border border-neutral-600 hover:border-white bg-black text-white text-[11px] font-black uppercase tracking-widest flex items-center justify-center gap-2 transition">
+                        <i class="fa-solid" :class="darkMode ? 'fa-sun text-amber-400' : 'fa-moon text-neutral-300'"></i>
+                        <span x-text="darkMode ? 'TEMA CLARO' : 'TEMA OSCURO'"></span>
+                    </button>
+
+                    <!-- Indicador de Estado de Sincronización Firebase -->
+                    <div class="mt-2 px-2.5 py-1.5 border text-[10px] font-black uppercase tracking-wider flex items-center justify-between"
+                         :class="cloudStatus === 'connected' ? 'border-emerald-700 bg-emerald-950/60 text-emerald-400' : (cloudStatus === 'saving' ? 'border-amber-600 bg-amber-950/60 text-amber-300' : (cloudStatus === 'error' ? 'border-red-700 bg-red-950/60 text-red-400' : 'border-neutral-700 bg-neutral-900 text-neutral-400'))">
+                        <span class="flex items-center gap-1.5">
+                            <i class="fa-solid" :class="cloudStatus === 'connected' ? 'fa-cloud' : (cloudStatus === 'saving' ? 'fa-cloud-arrow-up fa-bounce' : (cloudStatus === 'error' ? 'fa-triangle-exclamation' : 'fa-rotate fa-spin'))"></i>
+                            <span x-text="cloudStatus === 'connected' ? 'Nube Sincronizada' : (cloudStatus === 'saving' ? 'Guardando en Nube...' : (cloudStatus === 'error' ? 'Sin Conexión Nube' : 'Conectando...'))"></span>
+                        </span>
+                        <span class="w-2 h-2 rounded-full" :class="cloudStatus === 'connected' ? 'bg-emerald-400' : (cloudStatus === 'saving' ? 'bg-amber-400' : 'bg-red-500')"></span>
+                    </div>
+                </div>
+
+                <!-- Menú Vertical de Navegación en Mayúsculas Bold -->
+                <nav class="mt-2 flex flex-row lg:flex-col overflow-x-auto lg:overflow-visible border-t border-neutral-900">
+
+                    <!-- 2. LISTADO DE DEVOLUCIONES -->
+                    <button @click="activeTab = 'listado'; filterEstado = ''"
+                            :class="activeTab === 'listado' 
+                                ? 'bg-[#1f1f1f] border-b-4 lg:border-b-0 lg:border-l-4 border-[#e30613] text-white' 
+                                : 'text-neutral-400 hover:text-white hover:bg-neutral-900/60 border-b-4 lg:border-b-0 lg:border-l-4 border-transparent'"
+                            class="flex-1 lg:flex-none px-4 lg:px-5 py-4 text-left text-[11px] lg:text-xs font-black uppercase tracking-wider flex items-center gap-3 transition whitespace-nowrap">
+                        <i class="fa-solid fa-list-check text-sm w-4 text-center" :class="activeTab === 'listado' ? 'text-[#e30613]' : ''"></i>
+                        <span>LISTADO DE DEVOLUCIONES</span>
+                    </button>
+
+                    <!-- 2B. DEVOLUCIONES COMPLETADAS -->
+                    <button @click="activeTab = 'completadas'; filterEstado = ''"
+                            :class="activeTab === 'completadas' 
+                                ? 'bg-[#1f1f1f] border-b-4 lg:border-b-0 lg:border-l-4 border-[#e30613] text-white' 
+                                : 'text-neutral-400 hover:text-white hover:bg-neutral-900/60 border-b-4 lg:border-b-0 lg:border-l-4 border-transparent'"
+                            class="flex-1 lg:flex-none px-4 lg:px-5 py-4 text-left text-[11px] lg:text-xs font-black uppercase tracking-wider flex items-center gap-3 transition whitespace-nowrap">
+                        <i class="fa-solid fa-circle-check text-sm w-4 text-center" :class="activeTab === 'completadas' ? 'text-[#e30613]' : ''"></i>
+                        <span>DEVOLUCIONES COMPLETADAS</span>
+                    </button>
+
+                    <!-- 3. PROVEEDORES Y DEVOLUCIONES -->
+                    <button @click="activeTab = 'proveedores'"
+                            :class="activeTab === 'proveedores' 
+                                ? 'bg-[#1f1f1f] border-b-4 lg:border-b-0 lg:border-l-4 border-[#e30613] text-white' 
+                                : 'text-neutral-400 hover:text-white hover:bg-neutral-900/60 border-b-4 lg:border-b-0 lg:border-l-4 border-transparent'"
+                            class="flex-1 lg:flex-none px-4 lg:px-5 py-4 text-left text-[11px] lg:text-xs font-black uppercase tracking-wider flex items-center justify-between gap-1 transition">
+                        <span class="flex items-center gap-2.5 min-w-0">
+                            <i class="fa-solid fa-address-book text-sm w-4 text-center shrink-0" :class="activeTab === 'proveedores' ? 'text-[#e30613]' : ''"></i>
+                            <span class="leading-tight break-words">PROVEEDORES Y DEVOLUCIONES</span>
+                        </span>
+                        <span class="text-[10px] font-mono font-black px-1.5 py-0.5 bg-neutral-800 text-neutral-200 border border-neutral-600 shrink-0"
+                              x-text="suppliers.length"></span>
+                    </button>
+
+                    <!-- 4. CONTROL DE SECCIONES / ADMIN O CLAVE -->
+                    <button @click="activeTab = 'admin_control'"
+                            :class="activeTab === 'admin_control' 
+                                ? 'bg-[#1f1f1f] border-b-4 lg:border-b-0 lg:border-l-4 border-[#e30613] text-white' 
+                                : 'text-neutral-400 hover:text-white hover:bg-neutral-900/60 border-b-4 lg:border-b-0 lg:border-l-4 border-transparent'"
+                            class="flex-1 lg:flex-none px-4 lg:px-5 py-4 text-left text-[11px] lg:text-xs font-black uppercase tracking-wider flex items-center gap-3 transition whitespace-nowrap">
+                        <i class="fa-solid" :class="[isAdmin ? 'fa-crown' : 'fa-key', activeTab === 'admin_control' ? 'text-[#e30613]' : '']" class="text-sm w-4 text-center"></i>
+                        <span x-text="isAdmin ? 'CONTROL SECCIONES / ADMIN' : 'SEGURIDAD Y CLAVE'"></span>
+                    </button>
+                </nav>
+            </div>
+
+            <!-- Parte Inferior de la Barra Lateral: Sección Conectada y Cerrar Sesión -->
+            <div class="p-4 border-t border-neutral-800 bg-black space-y-3">
+                <div class="flex items-center gap-3 bg-[#161616] p-2.5 border border-neutral-800">
+                    <div :class="currentUser ? currentUser.activeIconBg : 'bg-[#e30613] text-white'"
+                         class="w-9 h-9 border border-black flex items-center justify-center text-base shrink-0">
+                        <i class="fa-solid" :class="currentUser ? currentUser.icon : 'fa-user'"></i>
+                    </div>
+                    <div class="min-w-0">
+                        <p class="text-[10px] font-bold uppercase text-neutral-400">Sesión Activa</p>
+                        <p class="text-xs font-black uppercase text-white truncate" x-text="currentUser ? currentUser.name : ''"></p>
+                        <p class="text-[10px] font-mono text-neutral-400 truncate" x-text="currentUser ? currentUser.email : ''"></p>
+                    </div>
+                </div>
+
+                <button @click="logout()"
+                        class="w-full py-2.5 px-3 bg-[#e30613] hover:bg-red-700 text-white text-xs font-black uppercase tracking-wider flex items-center justify-center gap-2 transition">
+                    <i class="fa-solid fa-right-from-bracket"></i>
+                    <span>CERRAR SESIÓN</span>
+                </button>
+            </div>
+        </aside>
+
+        <!-- ================================================================= -->
+        <!-- ÁREA PRINCIPAL DE CONTENIDO                                       -->
+        <!-- ================================================================= -->
+        <div class="flex-1 flex flex-col min-w-0">
+            <main class="flex-1 w-full min-w-0 px-4 py-6 space-y-7">
+
+                <!-- CABECERA PRINCIPAL GIGANTE ULTRA-BOLD CON LÍNEA NEGRA GRUESA -->
+                <header class="space-y-3">
+                    <div class="flex flex-col md:flex-row md:items-end justify-between gap-4">
+                        <h1 class="font-display text-3xl sm:text-4xl lg:text-[42px] uppercase tracking-tight leading-none"
+                            :class="darkMode ? 'text-white' : 'text-black'"
+                            x-text="pageTitle">
+                        </h1>
+
+                        <!-- Accesos rápidos superiores -->
+                        <div class="flex flex-wrap items-center gap-2">
+                            <button x-show="isAdmin" @click="exportData()"
+                                    :class="darkMode ? 'bg-neutral-900 text-white border-neutral-600 hover:bg-neutral-800' : 'bg-white text-black border-black hover:bg-neutral-100'"
+                                    class="px-3 py-1.5 border-2 text-xs font-black uppercase tracking-wider flex items-center gap-1.5 transition">
+                                <i class="fa-solid fa-download text-[#e30613]"></i> Exportar JSON
+                            </button>
+                            <button @click="openModal()"
+                                    class="px-4 py-1.5 bg-[#e30613] hover:bg-red-700 text-white border-2 border-black text-xs font-black uppercase tracking-wider flex items-center gap-1.5 transition">
+                                <i class="fa-solid fa-plus"></i> Nueva Devolución
+                            </button>
+                        </div>
+                    </div>
+                    <!-- Barra horizontal negra gruesa -->
+                    <div class="h-2 w-full" :class="darkMode ? 'bg-[#e30613]' : 'bg-black'"></div>
+                </header>
+
+                <!-- ========================================================= -->
+                <!-- VISTA 2: LISTADO COMPLETO DE DEVOLUCIONES (TABLA)         -->
+                <!-- ========================================================= -->
+                <section x-show="activeTab === 'listado' || activeTab === 'completadas'" class="space-y-6">
+                    <!-- Barra de Filtros y Búsqueda Bauhaus -->
+                    <div class="border-2 border-black bauhaus-shadow-black p-4 flex flex-col lg:flex-row items-center justify-between gap-4"
+                         :class="darkMode ? 'bg-[#1a1a1a]' : 'bg-white'">
+                        <div class="w-full lg:w-1/3 relative">
+                            <span class="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none text-neutral-500">
+                                <i class="fa-solid fa-search"></i>
+                            </span>
+                            <input type="text" x-model="search" placeholder="Buscar consecutivo, proveedor o gestor..."
+                                   :class="darkMode ? 'bg-neutral-900 border-neutral-600 text-white' : 'bg-neutral-50 border-black text-black'"
+                                   class="w-full pl-10 pr-4 py-2 border-2 text-xs font-semibold focus:outline-none focus:border-[#e30613]">
+                        </div>
+
+                        <div class="w-full lg:w-auto flex flex-wrap items-center gap-2.5">
+                            <!-- Filtro Sección (Solo Admin) -->
+                            <select x-show="isAdmin" x-model="filterSeccion"
+                                    class="bg-black text-white border-2 border-black text-xs font-black uppercase px-3 py-2 focus:outline-none">
+                                <option value="">TODAS LAS SECCIONES</option>
+                                <template x-for="sec in departmentSections" :key="sec.id">
+                                    <option :value="sec.name" x-text="sec.name.toUpperCase()"></option>
+                                </template>
+                            </select>
+
+                            <!-- Filtro Gestor -->
+                            <select x-model="filterGestor"
+                                    :class="darkMode ? 'bg-neutral-900 border-neutral-600 text-white' : 'bg-neutral-50 border-black text-black'"
+                                    class="border-2 text-xs font-bold uppercase px-3 py-2 focus:outline-none">
+                                <option value="">GESTOR (TODOS)</option>
+                                <template x-for="gestor in uniqueGestores" :key="gestor">
+                                    <option :value="gestor" x-text="gestor.toUpperCase()"></option>
+                                </template>
+                            </select>
+
+                            <!-- Filtro Destino -->
+                            <select x-model="filterDestino"
+                                    :class="darkMode ? 'bg-neutral-900 border-neutral-600 text-white' : 'bg-neutral-50 border-black text-black'"
+                                    class="border-2 text-xs font-bold uppercase px-3 py-2 focus:outline-none">
+                                <option value="">DESTINO (TODOS)</option>
+                                <option value="DESTRUCCIÓN">DESTRUCCIÓN</option>
+                                <option value="DEVOLUCIÓN">DEVOLUCIÓN</option>
+                            </select>
+
+                            <!-- Filtro Estado -->
+                            <select x-model="filterEstado"
+                                    :class="darkMode ? 'bg-neutral-900 border-neutral-600 text-white' : 'bg-neutral-50 border-black text-black'"
+                                    class="border-2 text-xs font-bold uppercase px-3 py-2 focus:outline-none">
+                                <option value="">ESTADO (TODOS)</option>
+                                <template x-for="o in estadoFilterOptions" :key="o.v">
+                                    <option :value="o.v" x-text="o.l"></option>
+                                </template>
+                            </select>
+
+                            <button @click="resetFilters()"
+                                    class="bg-neutral-200 hover:bg-neutral-300 text-black border-2 border-black text-xs font-black uppercase px-3 py-2 transition">
+                                <i class="fa-solid fa-rotate-right mr-1"></i> LIMPIAR
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Tabla Completa de Devoluciones -->
+                    <div class="border-2 border-black bauhaus-shadow-red overflow-hidden"
+                         :class="darkMode ? 'bg-[#1a1a1a]' : 'bg-white'">
+                        <div class="overflow-x-hidden">
+                            <table class="w-full text-left border-collapse table-auto">
+                                <thead>
+                                    <tr class="bg-black text-white text-[11px] uppercase tracking-wider font-black border-b-4 border-[#e30613]">
+                                        <template x-for="col in tableColumns" :key="col.key">
+                                        <th class="py-3 px-2 select-none" :class="col.center ? 'text-center' : ''">
+                                            <button type="button" @click="sortBy(col.key)" class="inline-flex items-center gap-1.5 uppercase font-black tracking-wider hover:text-[#e30613] transition" :title="'Ordenar por ' + col.label">
+                                                <span x-text="col.label"></span>
+                                                <i class="fa-solid text-[10px]" :class="sortKey === col.key ? (sortDir === 'asc' ? 'fa-arrow-up text-[#e30613]' : 'fa-arrow-down text-[#e30613]') : 'fa-sort text-neutral-500'"></i>
+                                            </button>
+                                        </th>
+                                    </template>
+                                        <th class="py-3 px-2 text-right">Acciones</th>
+                                    </tr>
+                                </thead>
+                                <tbody class="divide-y text-xs" :class="darkMode ? 'divide-neutral-800' : 'divide-neutral-300'">
+                                    <template x-for="item in filteredReturns" :key="item.id">
+                                        <tr class="transition" :class="darkMode ? 'hover:bg-neutral-900' : 'hover:bg-neutral-100'">
+                                            <td x-show="isAdmin" class="py-3 px-2">
+                                                <span class="inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-black uppercase bg-black text-white border border-neutral-700">
+                                                    <span :class="getSectionConfigByName(item.seccion || 'Pinturas').activeIconBg"
+                                                          class="w-4 h-4 rounded-full flex items-center justify-center text-[9px]">
+                                                        <i class="fa-solid" :class="getSectionConfigByName(item.seccion || 'Pinturas').icon"></i>
+                                                    </span>
+                                                    <span x-text="item.seccion || 'Pinturas'"></span>
+                                                </span>
+                                            </td>
+                                            <td class="py-3 px-2 font-bold uppercase" x-text="item.gestor || '—'"></td>
+                                            <td class="py-3 px-2 font-display text-sm" x-text="item.consecutivo"></td>
+                                            <td class="py-3 px-2">
+                                                <div class="font-black uppercase" x-text="item.proveedor"></div>
+                                                <div class="text-[11px] text-neutral-500 font-mono break-all" x-text="item.proveedorEmail || ''"></div>
+                                            </td>
+                                            <td class="py-3 px-2 text-center font-mono" x-text="item.solicitado || '—'"></td>
+                                            <td class="py-3 px-2 text-center font-mono" x-text="item.enviado || '—'"></td>
+                                            <td class="py-3 px-2 text-center font-mono" x-text="item.aceptacion || '—'"></td>
+                                            <td class="py-3 px-2">
+                                                <template x-if="item.entrego === 'DESTRUCCIÓN'">
+                                                    <span class="inline-flex items-center px-2.5 py-0.5 text-[11px] font-black uppercase bg-[#e30613] text-white border border-black">
+                                                        <i class="fa-solid fa-fire mr-1 text-[10px]"></i> DESTRUCCIÓN
+                                                    </span>
+                                                </template>
+                                                <template x-if="item.entrego === 'DEVOLUCIÓN'">
+                                                    <span class="inline-flex items-center px-2.5 py-0.5 text-[11px] font-black uppercase bg-emerald-500 text-black border border-black">
+                                                        <i class="fa-solid fa-rotate-left mr-1 text-[10px]"></i> DEVOLUCIÓN
+                                                    </span>
+                                                </template>
+                                                <template x-if="!item.entrego">
+                                                    <span class="text-neutral-400">—</span>
+                                                </template>
+                                            </td>
+                                            <td class="py-3 px-2 max-w-[220px] break-words" x-text="item.notas || '—'"></td>
+                                            <td class="py-3 px-2 text-center">
+                                                <span class="px-2.5 py-1 text-[11px] font-black uppercase border border-black"
+                                                    :class="{
+                                                        'bg-sky-400 text-black': item.estado === 'Abierto',
+                                                        'bg-emerald-500 text-black': item.estado === 'Completado',
+                                                        'bg-amber-400 text-black': item.estado === 'Pendiente',
+                                                        'bg-[#e30613] text-white': item.estado === 'caducado'
+                                                    }"
+                                                    x-text="item.estado">
+                                                </span>
+                                            </td>
+                                            <td class="py-3 px-2 text-right space-x-0.5 whitespace-nowrap">
+                                                <button @click="openEmailModal(item)"
+                                                        class="px-2 py-1.5 border border-black bg-white text-black hover:bg-black hover:text-white transition"
+                                                        title="Enviar correo desde sección">
+                                                    <i class="fa-solid fa-envelope"></i>
+                                                </button>
+                                                <button @click="editReturn(item)"
+                                                        class="px-2 py-1.5 border border-black bg-amber-400 text-black hover:bg-amber-300 transition"
+                                                        title="Editar devolución">
+                                                    <i class="fa-solid fa-pen-to-square"></i>
+                                                </button>
+                                                <button @click="deleteReturn(item.id)"
+                                                        class="px-2 py-1.5 border border-black bg-[#e30613] text-white hover:bg-red-700 transition"
+                                                        title="Eliminar devolución">
+                                                    <i class="fa-solid fa-trash-can"></i>
+                                                </button>
+                                            </td>
+                                        </tr>
+                                    </template>
+                                    <template x-if="filteredReturns.length === 0">
+                                        <tr>
+                                            <td :colspan="isAdmin ? 11 : 10" class="py-12 text-center text-neutral-500 font-bold uppercase">
+                                                No se encontraron devoluciones con los filtros seleccionados.
+                                            </td>
+                                        </tr>
+                                    </template>
+                                </tbody>
+                            </table>
+                        </div>
+                        <div class="bg-black text-white px-4 py-3 text-xs font-bold uppercase flex flex-col sm:flex-row justify-between items-center gap-2">
+                            <span x-text="`MOSTRANDO ${filteredReturns.length} DE ${modeReturns.length} REGISTROS`"></span>
+                            <span class="text-[#e30613]" x-text="`REMITENTE: ${currentUser ? currentUser.email : ''}`"></span>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- ========================================================= -->
+                <!-- VISTA 2B: PROVEEDORES Y DEVOLUCIONES                      -->
+                <!-- ========================================================= -->
+                <section x-show="activeTab === 'proveedores'" class="space-y-6">
+                    <!-- Barra superior de búsqueda, filtro por sección y botón Nuevo Proveedor -->
+                    <div class="border-2 border-black bauhaus-shadow-black p-4 flex flex-col lg:flex-row items-center justify-between gap-4"
+                         :class="darkMode ? 'bg-[#1a1a1a]' : 'bg-white'">
+                        <div class="w-full lg:w-2/5 relative">
+                            <span class="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none text-neutral-500">
+                                <i class="fa-solid fa-search"></i>
+                            </span>
+                            <input type="text" x-model="supplierSearch" placeholder="Buscar proveedor, email o persona de contacto..."
+                                   :class="darkMode ? 'bg-neutral-900 border-neutral-600 text-white' : 'bg-neutral-50 border-black text-black'"
+                                   class="w-full pl-10 pr-4 py-2 border-2 text-xs font-semibold focus:outline-none focus:border-[#e30613]">
+                        </div>
+
+                        <div class="w-full lg:w-auto flex flex-wrap items-center gap-2.5">
+                            <select x-model="supplierFilterSection"
+                                    :class="darkMode ? 'bg-neutral-900 border-neutral-600 text-white' : 'bg-neutral-50 border-black text-black'"
+                                    class="border-2 text-xs font-bold uppercase px-3 py-2 focus:outline-none">
+                                <option value="">TODAS LAS SECCIONES</option>
+                                <option value="General">GENERAL / VARIAS</option>
+                                <template x-for="sec in departmentSections" :key="sec.id">
+                                    <option :value="sec.name" x-text="sec.name.toUpperCase()"></option>
+                                </template>
+                            </select>
+
+                            <button @click="openSupplierModal()"
+                                    class="bg-[#e30613] hover:bg-red-700 text-white border-2 border-black px-4 py-2 text-xs font-black uppercase tracking-wider flex items-center gap-2 transition">
+                                <i class="fa-solid fa-plus"></i>
+                                <span>Añadir Proveedor</span>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Tabla Bauhaus de Proveedores y Devoluciones -->
+                    <div class="border-2 border-black bauhaus-shadow-red overflow-hidden"
+                         :class="darkMode ? 'bg-[#1a1a1a]' : 'bg-white'">
+                        <div class="overflow-x-auto">
+                            <table class="w-full text-left border-collapse">
+                                <thead>
+                                    <tr class="bg-black text-white text-[11px] uppercase tracking-wider font-black border-b-4 border-[#e30613]">
+                                        <th class="py-3.5 px-4">Proveedor</th>
+                                        <th class="py-3.5 px-4">Email Devoluciones</th>
+                                        <th class="py-3.5 px-4">Email Secundario / CC</th>
+                                        <th class="py-3.5 px-4">Contacto / Teléfono</th>
+                                        <th class="py-3.5 px-4">Sección Habitual</th>
+                                        <th class="py-3.5 px-4 text-right">Acciones</th>
+                                    </tr>
+                                </thead>
+                                <tbody class="divide-y text-xs" :class="darkMode ? 'divide-neutral-800' : 'divide-neutral-300'">
+                                    <template x-for="sup in filteredSuppliers" :key="sup.id">
+                                        <tr class="transition" :class="darkMode ? 'hover:bg-neutral-900' : 'hover:bg-neutral-100'">
+                                            <td class="py-3.5 px-4 font-display text-sm uppercase" x-text="sup.name"></td>
+                                            <td class="py-3.5 px-4">
+                                                <span class="inline-flex items-center gap-1.5 font-mono font-bold text-[#e30613]" x-text="sup.email"></span>
+                                            </td>
+                                            <td class="py-3.5 px-4 font-mono text-neutral-500" x-text="sup.ccEmail || '—'"></td>
+                                            <td class="py-3.5 px-4 font-semibold" x-text="sup.contact || '—'"></td>
+                                            <td class="py-3.5 px-4">
+                                                <span class="inline-flex items-center gap-1.5 px-2.5 py-1 text-[10px] font-black uppercase bg-black text-white border border-neutral-700">
+                                                    <span :class="getSectionConfigByName(sup.section || 'Pinturas').activeIconBg"
+                                                          class="w-3.5 h-3.5 rounded-full flex items-center justify-center text-[8px]">
+                                                        <i class="fa-solid" :class="sup.section === 'General' ? 'fa-building' : getSectionConfigByName(sup.section || 'Pinturas').icon"></i>
+                                                    </span>
+                                                    <span x-text="sup.section || 'General'"></span>
+                                                </span>
+                                            </td>
+                                            <td class="py-3.5 px-4 text-right space-x-1 whitespace-nowrap">
+                                                <button @click="createReturnWithSupplier(sup)"
+                                                        class="px-2.5 py-1.5 border border-black bg-emerald-500 hover:bg-emerald-400 text-black text-[10px] font-black uppercase transition"
+                                                        title="Crear devolución con este proveedor">
+                                                    <i class="fa-solid fa-plus mr-1"></i> Devolución
+                                                </button>
+                                                <button @click="openSupplierModal(sup)"
+                                                        class="px-2 py-1.5 border border-black bg-amber-400 hover:bg-amber-300 text-black transition"
+                                                        title="Editar proveedor">
+                                                    <i class="fa-solid fa-pen-to-square"></i>
+                                                </button>
+                                                <button @click="deleteSupplier(sup.id)"
+                                                        class="px-2 py-1.5 border border-black bg-[#e30613] hover:bg-red-700 text-white transition"
+                                                        title="Eliminar proveedor">
+                                                    <i class="fa-solid fa-trash-can"></i>
+                                                </button>
+                                            </td>
+                                        </tr>
+                                    </template>
+                                    <template x-if="filteredSuppliers.length === 0">
+                                        <tr>
+                                            <td colspan="6" class="py-12 text-center text-neutral-500 font-bold uppercase">
+                                                No se encontraron proveedores en proveedores y devoluciones.
+                                            </td>
+                                        </tr>
+                                    </template>
+                                </tbody>
+                            </table>
+                        </div>
+                        <div class="bg-black text-white px-4 py-3 text-xs font-bold uppercase flex flex-col sm:flex-row justify-between items-center gap-2">
+                            <span x-text="`TOTAL PROVEEDORES REGISTRADOS: ${filteredSuppliers.length} DE ${suppliers.length}`"></span>
+                            <span class="text-neutral-400">DISPONIBLES AUTOMÁTICAMENTE AL CREAR DEVOLUCIONES</span>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- ========================================================= -->
+                <!-- VISTA 3: CONTROL DE SECCIONES (ADMIN) O SEGURIDAD SECCIÓN -->
+                <!-- ========================================================= -->
+                <section x-show="activeTab === 'admin_control'" class="space-y-6">
+                    <!-- Vista si es ADMINISTRADOR -->
+                    <template x-if="isAdmin">
+                        <div class="space-y-6">
+                            <!-- Selector rápido de secciones con contadores -->
+                            <div class="border-2 border-black bauhaus-shadow-black p-6 space-y-4"
+                                 :class="darkMode ? 'bg-[#1a1a1a]' : 'bg-white'">
+                                <h2 class="font-display text-xl uppercase">Filtrado Global por Secciones</h2>
+                                <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+                                    <button @click="filterSeccion = ''; activeTab = 'listado'"
+                                            class="p-3 border-2 border-black bg-black text-white text-left flex items-center justify-between hover:bg-[#e30613] transition">
+                                        <span class="text-xs font-black uppercase">TODAS</span>
+                                        <span class="font-display text-lg" x-text="returns.length"></span>
+                                    </button>
+                                    <template x-for="sec in departmentSections" :key="sec.id">
+                                        <button @click="filterSeccion = sec.name; activeTab = 'listado'"
+                                                :class="darkMode ? 'bg-neutral-900 border-neutral-600 text-white hover:border-[#e30613]' : 'bg-neutral-50 border-black text-black hover:bg-neutral-200'"
+                                                class="p-3 border-2 text-left flex items-center justify-between transition">
+                                            <div class="flex items-center gap-2 min-w-0">
+                                                <span :class="sec.activeIconBg" class="w-6 h-6 rounded-full flex items-center justify-center text-xs shrink-0">
+                                                    <i class="fa-solid" :class="sec.icon"></i>
+                                                </span>
+                                                <span class="text-xs font-black uppercase truncate" x-text="sec.name"></span>
+                                            </div>
+                                            <span class="font-display text-lg ml-2" x-text="countBySection(sec.name)"></span>
+                                        </button>
+                                    </template>
+                                </div>
+                            </div>
+
+                            <!-- Gestor de Contraseñas de Secciones -->
+                            <div class="border-2 border-black bauhaus-shadow-red p-6 space-y-4"
+                                 :class="darkMode ? 'bg-[#1a1a1a]' : 'bg-white'">
+                                <div>
+                                    <h2 class="font-display text-xl uppercase">Gestor de Contraseñas por Sección</h2>
+                                    <p class="text-xs text-neutral-500 font-medium mt-1">Asigna una clave nueva o restablece la contraseña de cualquier sección para forzar su creación en el próximo inicio de sesión (sincronizado en Firebase).</p>
+                                </div>
+
+                                <div class="divide-y border-2 border-black" :class="darkMode ? 'divide-neutral-800 border-neutral-600' : 'divide-neutral-300'">
+                                    <template x-for="sec in departmentSections" :key="sec.id">
+                                        <div class="p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+                                             :class="darkMode ? 'bg-neutral-900' : 'bg-white'">
+                                            <div class="flex items-center gap-3">
+                                                <div :class="sec.activeIconBg" class="w-9 h-9 border border-black flex items-center justify-center">
+                                                    <i class="fa-solid" :class="sec.icon"></i>
+                                                </div>
+                                                <div>
+                                                    <p class="text-xs font-black uppercase" x-text="sec.name"></p>
+                                                    <span x-show="hasSectionPassword(sec.id)" class="inline-block text-[10px] font-black uppercase bg-emerald-500 text-black px-2 py-0.5 border border-black">
+                                                        Contraseña Configurada
+                                                    </span>
+                                                    <span x-show="!hasSectionPassword(sec.id)" class="inline-block text-[10px] font-black uppercase bg-amber-400 text-black px-2 py-0.5 border border-black">
+                                                        Sin Configurar (Primer Acceso)
+                                                    </span>
+                                                </div>
+                                            </div>
+
+                                            <div class="flex flex-wrap items-center gap-2">
+                                                <input type="text" x-model="adminPassInputs[sec.id]" placeholder="Nueva clave..."
+                                                       class="w-36 px-3 py-1.5 border-2 border-black text-xs text-black bg-white focus:outline-none">
+                                                <button type="button" @click="adminSetSectionPassword(sec.id, sec.name)"
+                                                        class="bg-black hover:bg-neutral-800 text-white border-2 border-black px-3 py-1.5 text-xs font-black uppercase transition">
+                                                    Guardar
+                                                </button>
+                                                <button type="button" x-show="hasSectionPassword(sec.id)" @click="adminResetSectionPassword(sec.id, sec.name)"
+                                                        class="bg-[#e30613] hover:bg-red-700 text-white border-2 border-black px-3 py-1.5 text-xs font-black uppercase transition">
+                                                    Restablecer
+                                                </button>
+                                            </div>
+                                        </div>
+                                    </template>
+                                </div>
+                            </div>
+                        </div>
+                    </template>
+
+                    <!-- Vista si es SECCIÓN DEPARTAMENTAL (Cambiar su contraseña) -->
+                    <template x-if="!isAdmin">
+                        <div class="max-w-lg border-2 border-black bauhaus-shadow-red p-6 space-y-4"
+                             :class="darkMode ? 'bg-[#1a1a1a]' : 'bg-white'">
+                            <h2 class="font-display text-xl uppercase">Cambiar Contraseña de Sección</h2>
+                            <p class="text-xs text-neutral-500 font-medium">Modifica la contraseña de acceso para <strong x-text="currentUser ? currentUser.name : ''"></strong>.</p>
+
+                            <form @submit.prevent="submitSectionPasswordChange()" class="space-y-4">
+                                <div>
+                                    <label class="block text-xs font-black uppercase mb-1">Contraseña Actual *</label>
+                                    <input type="password" x-model="changePassModal.currentPass" required
+                                           class="w-full px-3 py-2 border-2 border-black text-sm text-black bg-white focus:outline-none">
+                                </div>
+                                <div>
+                                    <label class="block text-xs font-black uppercase mb-1">Nueva Contraseña *</label>
+                                    <input type="password" x-model="changePassModal.newPass" required minlength="4"
+                                           class="w-full px-3 py-2 border-2 border-black text-sm text-black bg-white focus:outline-none">
+                                </div>
+                                <div>
+                                    <label class="block text-xs font-black uppercase mb-1">Confirmar Nueva Contraseña *</label>
+                                    <input type="password" x-model="changePassModal.confirmPass" required minlength="4"
+                                           class="w-full px-3 py-2 border-2 border-black text-sm text-black bg-white focus:outline-none">
+                                </div>
+                                <p x-show="changePassModal.error" x-text="changePassModal.error" class="text-xs text-[#e30613] font-black uppercase"></p>
+                                <button type="submit" class="bg-[#e30613] hover:bg-red-700 text-white border-2 border-black px-5 py-2.5 text-xs font-black uppercase tracking-wider transition">
+                                    Actualizar Contraseña
+                                </button>
+                            </form>
+                        </div>
+                    </template>
+                </section>
+
+            </main>
+        </div>
+    </div>
+
+    <!-- ===================================================================== -->
+    <!-- MODAL FORMULARIO: NUEVA / EDITAR DEVOLUCIÓN (BLOQUEADO AL CLIC FUERA) -->
+    <!-- ===================================================================== -->
+    <div x-show="modalOpen" class="fixed inset-0 z-50 overflow-y-auto bg-black/75 flex items-center justify-center p-4" x-cloak>
+        <div class="bg-white text-black border-4 border-black bauhaus-shadow-red max-w-2xl w-full overflow-hidden">
+            <div class="bg-black text-white px-6 py-4 flex justify-between items-center border-b-4 border-[#e30613]">
+                <h3 class="font-display text-lg uppercase flex items-center gap-2">
+                    <i class="fa-solid text-[#e30613]" :class="isEditing ? 'fa-pen-to-square' : 'fa-circle-plus'"></i>
+                    <span x-text="isEditing ? 'EDITAR DEVOLUCIÓN' : 'NUEVA DEVOLUCIÓN'"></span>
+                </h3>
+                <button type="button" @click="closeModal()" class="text-neutral-400 hover:text-white text-xl font-black" title="Cerrar formulario">
+                    [X]
+                </button>
+            </div>
+
+            <form @submit.prevent="saveReturn()" class="p-6 space-y-4 bg-[#f4f4f4]">
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <!-- Sección -->
+                    <div>
+                        <label class="block text-xs font-black uppercase mb-1">Sección *</label>
+                        <select x-model="form.seccion" :disabled="!isAdmin" required
+                                :class="!isAdmin ? 'bg-neutral-200 text-neutral-600 cursor-not-allowed' : 'bg-white text-black'"
+                                class="w-full border-2 border-black px-3 py-2 text-xs font-black uppercase focus:outline-none">
+                            <template x-for="sec in departmentSections" :key="sec.id">
+                                <option :value="sec.name" x-text="sec.name.toUpperCase()"></option>
+                            </template>
+                        </select>
+                    </div>
+
+                    <!-- Gestor -->
+                    <div>
+                        <label class="block text-xs font-black uppercase mb-1">Gestor</label>
+                        <input type="text" x-model="form.gestor" placeholder="Ej. ALBA, MIGUEL"
+                               class="w-full bg-white border-2 border-black px-3 py-2 text-xs font-bold focus:outline-none">
+                    </div>
+
+                    <!-- Nº Consecutivo -->
+                    <div>
+                        <label class="block text-xs font-black uppercase mb-1">Nº Consecutivo *</label>
+                        <input type="text" x-model="form.consecutivo" required placeholder="Ej. 253243"
+                               class="w-full bg-white border-2 border-black px-3 py-2 text-xs font-bold focus:outline-none">
+                    </div>
+
+                    <!-- Selector Desplegable de Proveedor -->
+                    <div class="sm:col-span-2 bg-white p-3.5 border-2 border-black space-y-3">
+                        <div class="flex flex-wrap items-center justify-between gap-2">
+                            <label class="text-xs font-black uppercase flex items-center gap-1.5">
+                                <i class="fa-solid fa-address-book text-[#e30613]"></i>
+                                <span>Proveedor (Proveedores y Devoluciones) *</span>
+                            </label>
+                            <button type="button" @click="closeModal(); activeTab = 'proveedores'"
+                                    class="text-[10px] font-black uppercase underline text-neutral-600 hover:text-[#e30613]">
+                                Gestionar Proveedores &rarr;
+                            </button>
+                        </div>
+
+                        <select x-model="selectedSupplierPreset" @change="onSelectSupplierPreset()"
+                                class="w-full bg-neutral-50 border-2 border-black px-3 py-2 text-xs font-black uppercase focus:outline-none focus:bg-yellow-50">
+                            <option value="">-- SELECCIONAR PROVEEDOR REGISTRADO --</option>
+                            <template x-for="sup in sortedSuppliers" :key="sup.id">
+                                <option :value="sup.id" x-text="`${sup.name} (${sup.email})`"></option>
+                            </template>
+                            <option value="__manual__">+ NUEVO PROVEEDOR / ESCRIBIR MANUALMENTE...</option>
+                        </select>
+
+                        <!-- Aviso visual con el email vinculado -->
+                        <div x-show="selectedSupplierPreset && selectedSupplierPreset !== '__manual__'"
+                             class="bg-emerald-50 border border-emerald-600 px-3 py-2 flex flex-wrap items-center justify-between gap-2 text-xs">
+                            <span class="font-bold text-emerald-950">
+                                <i class="fa-solid fa-envelope-circle-check text-emerald-600 mr-1.5"></i>
+                                Email vinculado: <strong class="font-mono" x-text="form.proveedorEmail"></strong>
+                            </span>
+                            <span class="text-[10px] font-black uppercase bg-emerald-600 text-white px-2 py-0.5">Listo para envío</span>
+                        </div>
+
+                        <!-- Campos manuales si elige "+ Nuevo proveedor / Escribir manualmente" -->
+                        <div x-show="selectedSupplierPreset === '__manual__'" class="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                            <div>
+                                <label class="block text-[11px] font-black uppercase mb-1">Nombre del Proveedor *</label>
+                                <input type="text" x-model="form.proveedor" :required="selectedSupplierPreset === '__manual__'"
+                                       placeholder="Ej. KOOPMAN, VERSA, JOTUN"
+                                       class="w-full bg-neutral-50 border-2 border-black px-3 py-2 text-xs font-bold uppercase focus:outline-none">
+                            </div>
+                            <div>
+                                <label class="block text-[11px] font-black uppercase mb-1">Email del Proveedor</label>
+                                <input type="email" x-model="form.proveedorEmail" placeholder="devoluciones@proveedor.com"
+                                       class="w-full bg-neutral-50 border-2 border-black px-3 py-2 text-xs font-mono focus:outline-none">
+                            </div>
+                            <div class="sm:col-span-2">
+                                <label class="inline-flex items-center gap-2 cursor-pointer text-xs font-bold">
+                                    <input type="checkbox" x-model="saveManualSupplierToBook" class="w-4 h-4 accent-[#e30613] border-2 border-black">
+                                    <span>Guardar este proveedor automáticamente en Proveedores y Devoluciones</span>
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Pantallazo Solicitado -->
+                    <div>
+                        <label class="block text-xs font-black uppercase mb-1">Pantallazo Solicitado</label>
+                        <input type="date" x-model="form.solicitado" @change="autoStatus()"
+                               class="w-full bg-white border-2 border-black px-3 py-2 text-xs font-mono focus:outline-none">
+                    </div>
+
+                    <!-- Pantallazo Enviado -->
+                    <div>
+                        <label class="block text-xs font-black uppercase mb-1">Pantallazo Enviado</label>
+                        <input type="date" x-model="form.enviado" @change="autoStatus()"
+                               class="w-full bg-white border-2 border-black px-3 py-2 text-xs font-mono focus:outline-none">
+                    </div>
+
+                    <!-- Aceptación Devolución -->
+                    <div>
+                        <label class="block text-xs font-black uppercase mb-1">Aceptación Devolución (Día)</label>
+                        <input type="date" x-model="form.aceptacion" @change="autoStatus()"
+                               class="w-full bg-white border-2 border-black px-3 py-2 text-xs font-mono focus:outline-none">
+                    </div>
+
+                    <!-- Entrega / Destino -->
+                    <div>
+                        <label class="block text-xs font-black uppercase mb-1">Entrega / Destino</label>
+                        <select x-model="form.entrego"
+                                class="w-full bg-white border-2 border-black px-3 py-2 text-xs font-black uppercase focus:outline-none">
+                            <option value="">SELECCIONAR DESTINO...</option>
+                            <option value="DESTRUCCIÓN">DESTRUCCIÓN (ROJO)</option>
+                            <option value="DEVOLUCIÓN">DEVOLUCIÓN (VERDE)</option>
+                        </select>
+                    </div>
+
+                    <!-- Estado -->
+                    <div>
+                        <label class="block text-xs font-black uppercase mb-1">Estado</label>
+                        <select x-model="form.estado"
+                                class="w-full bg-white border-2 border-black px-3 py-2 text-xs font-black uppercase focus:outline-none">
+                            <option value="Abierto">ABIERTO (AZUL)</option>
+                            <option value="Pendiente">PENDIENTE (AMARILLO)</option>
+                            <option value="Completado">COMPLETADO (VERDE)</option>
+                            <option value="caducado">CADUCADO (ROJO)</option>
+                        </select>
+                    </div>
+
+                    <!-- Notas -->
+                    <div class="sm:col-span-2">
+                        <label class="block text-xs font-black uppercase mb-1">Notas (Portes pagados o no)</label>
+                        <textarea x-model="form.notas" rows="2" placeholder="Observaciones, portes..."
+                                  class="w-full bg-white border-2 border-black px-3 py-2 text-xs focus:outline-none"></textarea>
+                    </div>
+                </div>
+
+                <div class="flex justify-end gap-3 pt-4 border-t-2 border-black">
+                    <button type="button" @click="closeModal()"
+                            class="bg-white hover:bg-neutral-200 text-black border-2 border-black px-4 py-2 text-xs font-black uppercase transition">
+                        Cancelar
+                    </button>
+                    <button type="submit"
+                            class="bg-[#e30613] hover:bg-red-700 text-white border-2 border-black px-5 py-2 text-xs font-black uppercase transition">
+                        Guardar Registro
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- ===================================================================== -->
+    <!-- MODAL DE ENVÍO DE CORREO AL PROVEEDOR (BLOQUEADO AL CLIC FUERA)       -->
+    <!-- ===================================================================== -->
+    <div x-show="emailModal.open" class="fixed inset-0 z-50 overflow-y-auto bg-black/75 flex items-center justify-center p-4" x-cloak>
+        <div class="bg-white text-black border-4 border-black bauhaus-shadow-black max-w-xl w-full overflow-hidden">
+            <div class="bg-black text-white px-6 py-4 flex justify-between items-center border-b-4 border-[#e30613]">
+                <h3 class="font-display text-base sm:text-lg uppercase flex items-center gap-2">
+                    <i class="fa-solid fa-envelope-open-text text-[#e30613]"></i>
+                    <span>ENVIAR CORREO AL PROVEEDOR</span>
+                </h3>
+                <button type="button" @click="emailModal.open = false" class="text-neutral-400 hover:text-white text-lg font-black">[X]</button>
+            </div>
+
+            <div class="p-6 space-y-4 bg-[#f4f4f4]">
+                <div class="bg-white p-3 border-2 border-black flex items-center justify-between text-xs">
+                    <span class="font-black uppercase">Remitente Activo:</span>
+                    <span class="font-mono font-bold bg-black text-white px-2.5 py-1" x-text="emailModal.sender"></span>
+                </div>
+
+                <!-- Desplegable rápido de proveedores -->
+                <div>
+                    <label class="block text-xs font-black uppercase mb-1">Seleccionar Contacto de Proveedores (Opcional)</label>
+                    <select x-model="emailModal.selectedBookId" @change="applyBookSupplierToEmail()"
+                            class="w-full bg-white border-2 border-black px-3 py-2 text-xs font-bold uppercase focus:outline-none">
+                        <option value="">-- MANTENER EMAIL ACTUAL DEL REGISTRO --</option>
+                        <template x-for="sup in sortedSuppliers" :key="sup.id">
+                            <option :value="sup.id" x-text="`${sup.name} — ${sup.email}`"></option>
+                        </template>
+                    </select>
+                </div>
+
+                <div>
+                    <label class="block text-xs font-black uppercase mb-1">Para (Email Proveedor)</label>
+                    <input type="email" x-model="emailModal.to"
+                           class="w-full bg-white border-2 border-black px-3 py-2 text-xs font-mono focus:outline-none">
+                </div>
+
+                <div x-show="emailModal.cc">
+                    <label class="block text-xs font-black uppercase mb-1">CC (Email Secundario)</label>
+                    <input type="text" x-model="emailModal.cc"
+                           class="w-full bg-white border-2 border-black px-3 py-2 text-xs font-mono focus:outline-none">
+                </div>
+
+                <div>
+                    <label class="block text-xs font-black uppercase mb-1">Asunto</label>
+                    <input type="text" x-model="emailModal.subject"
+                           class="w-full bg-white border-2 border-black px-3 py-2 text-xs font-bold focus:outline-none">
+                </div>
+
+                <div>
+                    <label class="block text-xs font-black uppercase mb-1">Cuerpo del Mensaje</label>
+                    <textarea x-model="emailModal.body" rows="8"
+                              class="w-full bg-white border-2 border-black px-3 py-2 text-xs font-mono focus:outline-none"></textarea>
+                </div>
+
+                <div class="flex flex-wrap justify-end gap-2 pt-3 border-t-2 border-black">
+                    <button type="button" @click="copyEmailContent()"
+                            class="bg-white hover:bg-neutral-200 text-black border-2 border-black px-4 py-2 text-xs font-black uppercase transition flex items-center gap-1.5">
+                        <i class="fa-solid fa-copy"></i> Copiar Texto
+                    </button>
+                    <button type="button" @click="downloadEml()"
+                            class="bg-white hover:bg-neutral-200 text-black border-2 border-black px-4 py-2 text-xs font-black uppercase transition flex items-center gap-1.5"
+                            title="Descarga un borrador .eml que se abre en el programa asociado a .eml (Outlook clásico)">
+                        <i class="fa-solid fa-file-arrow-down"></i> Borrador .eml
+                    </button>
+                    <button type="button" @click="launchMailto()"
+                            class="bg-[#e30613] hover:bg-red-700 text-white border-2 border-black px-5 py-2 text-xs font-black uppercase transition flex items-center gap-2">
+                        <i class="fa-solid fa-paper-plane"></i> Abrir Cliente de Correo
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ===================================================================== -->
+    <!-- MODAL AÑADIR / EDITAR PROVEEDOR (BLOQUEADO AL CLIC FUERA)             -->
+    <!-- ===================================================================== -->
+    <div x-show="supplierModal.open" class="fixed inset-0 z-50 overflow-y-auto bg-black/75 flex items-center justify-center p-4" x-cloak>
+        <div class="bg-white text-black border-4 border-black bauhaus-shadow-red max-w-lg w-full overflow-hidden">
+            <div class="bg-black text-white px-6 py-4 flex justify-between items-center border-b-4 border-[#e30613]">
+                <h3 class="font-display text-base sm:text-lg uppercase flex items-center gap-2">
+                    <i class="fa-solid fa-address-book text-[#e30613]"></i>
+                    <span x-text="supplierModal.isEditing ? 'EDITAR PROVEEDOR' : 'NUEVO PROVEEDOR'"></span>
+                </h3>
+                <button type="button" @click="supplierModal.open = false" class="text-neutral-400 hover:text-white text-lg font-black">[X]</button>
+            </div>
+
+            <form @submit.prevent="saveSupplier()" class="p-6 space-y-4 bg-[#f4f4f4]">
+                <div>
+                    <label class="block text-xs font-black uppercase mb-1">Nombre del Proveedor *</label>
+                    <input type="text" x-model="supplierForm.name" required placeholder="Ej. AKZO NOBEL, JOTUN, BOSCH..."
+                           class="w-full bg-white border-2 border-black px-3 py-2 text-xs font-bold uppercase focus:outline-none">
+                </div>
+
+                <div>
+                    <label class="block text-xs font-black uppercase mb-1">Email de Devoluciones *</label>
+                    <input type="email" x-model="supplierForm.email" required placeholder="devoluciones@proveedor.com"
+                           class="w-full bg-white border-2 border-black px-3 py-2 text-xs font-mono focus:outline-none">
+                </div>
+
+                <div>
+                    <label class="block text-xs font-black uppercase mb-1">EMAIL SECUNDARIO / CC</label>
+                    <input type="email" x-model="supplierForm.ccEmail" placeholder="merbarcelona@bauhaus.es"
+                           class="w-full bg-white border-2 border-black px-3 py-2 text-xs font-mono focus:outline-none">
+                </div>
+
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                        <label class="block text-xs font-black uppercase mb-1">Persona Contacto / Teléfono</label>
+                        <input type="text" x-model="supplierForm.contact" placeholder="Ej. Ana López - 934 000 111"
+                               class="w-full bg-white border-2 border-black px-3 py-2 text-xs focus:outline-none">
+                    </div>
+
+                    <div>
+                        <label class="block text-xs font-black uppercase mb-1">Sección Habitual</label>
+                        <select x-model="supplierForm.section"
+                                class="w-full bg-white border-2 border-black px-3 py-2 text-xs font-black uppercase focus:outline-none">
+                            <option value="General">GENERAL / VARIAS</option>
+                            <template x-for="sec in departmentSections" :key="sec.id">
+                                <option :value="sec.name" x-text="sec.name.toUpperCase()"></option>
+                            </template>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="flex justify-end gap-3 pt-4 border-t-2 border-black">
+                    <button type="button" @click="supplierModal.open = false"
+                            class="bg-white hover:bg-neutral-200 text-black border-2 border-black px-4 py-2 text-xs font-black uppercase transition">
+                        Cancelar
+                    </button>
+                    <button type="submit"
+                            class="bg-[#e30613] hover:bg-red-700 text-white border-2 border-black px-5 py-2 text-xs font-black uppercase transition">
+                        Guardar Proveedor
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- ===================================================================== -->
+    <!-- MODAL DE CONFIRMACIÓN DE ELIMINACIÓN                                  -->
+    <!-- ===================================================================== -->
+    <div x-show="deleteModal.open" class="fixed inset-0 z-50 overflow-y-auto bg-black/75 flex items-center justify-center p-4" x-cloak>
+        <div class="bg-white text-black border-4 border-black bauhaus-shadow-red max-w-md w-full p-6 space-y-4">
+            <div class="flex items-center gap-3 text-[#e30613]">
+                <i class="fa-solid fa-triangle-exclamation text-2xl"></i>
+                <h3 class="font-display text-lg uppercase text-black">Confirmar Eliminación</h3>
+            </div>
+            <p class="text-xs font-medium text-neutral-700" x-text="deleteModal.type === 'supplier' ? '¿Estás seguro de que deseas eliminar este proveedor? Esta acción no se puede deshacer.' : '¿Estás seguro de que deseas eliminar este registro de devolución? Esta acción no se puede deshacer.'"></p>
+            <div class="flex justify-end gap-3 pt-2">
+                <button type="button" @click="deleteModal.open = false"
+                        class="bg-white hover:bg-neutral-200 text-black border-2 border-black px-4 py-2 text-xs font-black uppercase transition">
+                    Cancelar
+                </button>
+                <button type="button" @click="confirmDelete()"
+                        class="bg-[#e30613] hover:bg-red-700 text-white border-2 border-black px-4 py-2 text-xs font-black uppercase transition">
+                    Eliminar
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast Notification -->
+    <div x-show="toast.show"
+         x-transition:enter="transition ease-out duration-200"
+         x-transition:enter-start="opacity-0 translate-y-4"
+         x-transition:enter-end="opacity-100 translate-y-0"
+         x-transition:leave="transition ease-in duration-150"
+         x-transition:leave-start="opacity-100 translate-y-0"
+         x-transition:leave-end="opacity-0 translate-y-4"
+         class="fixed bottom-5 right-5 z-50 bg-black text-white px-4 py-3 border-2 border-white bauhaus-shadow-red flex items-center gap-3" x-cloak>
+        <i class="fa-solid fa-circle-check text-[#e30613] text-base"></i>
+        <span class="text-xs font-black uppercase tracking-wider" x-text="toast.message"></span>
+    </div>
+
+    <!-- ===================================================================== -->
+    <!-- SCRIPT PRINCIPAL DE LA APLICACIÓN                                     -->
+    <!-- ===================================================================== -->
+    <script>
+        function returnsApp() {
+            return {
+                darkMode: false,
+                activeTab: 'listado', // 'listado' | 'completadas' | 'proveedores' | 'admin_control'
+                sortKey: '',
+                sortDir: 'asc',
+                cloudStatus: 'connecting', // 'connecting' | 'connected' | 'saving' | 'error'
+
+                sectionsConfig: [
+                    { id: 'pinturas', name: 'Pinturas', email: 'pinturas807@bauhaus.es', icon: 'fa-paint-roller', iconBg: 'bg-pink-100 text-pink-600', activeIconBg: 'bg-pink-600 text-white' },
+                    { id: 'electricidad', name: 'Electricidad', email: 'electricidad807@bauhaus.es', icon: 'fa-bolt', iconBg: 'bg-amber-100 text-amber-600', activeIconBg: 'bg-amber-400 text-black' },
+                    { id: 'sanitarios', name: 'Sanitarios', email: 'sanitarios807@bauhaus.es', icon: 'fa-faucet-drip', iconBg: 'bg-cyan-100 text-cyan-600', activeIconBg: 'bg-cyan-600 text-white' },
+                    { id: 'maderas', name: 'Maderas', email: 'maderas807@bauhaus.es', icon: 'fa-tree', iconBg: 'bg-orange-100 text-orange-700', activeIconBg: 'bg-orange-600 text-white' },
+                    { id: 'ferreteria', name: 'Ferretería', email: 'ferreteria807@bauhaus.es', icon: 'fa-screwdriver-wrench', iconBg: 'bg-slate-200 text-slate-700', activeIconBg: 'bg-slate-600 text-white' },
+                    { id: 'maquinaria', name: 'Maquinaria', email: 'maquinaria807@bauhaus.es', icon: 'fa-gears', iconBg: 'bg-indigo-100 text-indigo-600', activeIconBg: 'bg-indigo-600 text-white' },
+                    { id: 'jardin', name: 'Jardín', email: 'jardin807@bauhaus.es', icon: 'fa-seedling', iconBg: 'bg-emerald-100 text-emerald-600', activeIconBg: 'bg-emerald-600 text-white' },
+                    { id: 'ordenacion', name: 'Ordenación', email: 'ordenacion807@bauhaus.es', icon: 'fa-boxes-stacked', iconBg: 'bg-purple-100 text-purple-600', activeIconBg: 'bg-purple-600 text-white' },
+                    { id: 'admin', name: 'Administrador', email: 'admin807@bauhaus.es', icon: 'fa-user-shield', iconBg: 'bg-[#e30613] text-white', activeIconBg: 'bg-[#e30613] text-white', pin: 'bcn807' }
+                ],
+
+                sectionPasswords: {},
+                selectedLoginSec: null,
+                loginPin: '',
+                loginNewPass: '',
+                loginConfirmPass: '',
+                loginError: '',
+                currentUser: null,
+
+                pushAlerts: { show: false, message: '' },
+
+                changePassModal: { currentPass: '', newPass: '', confirmPass: '', error: '' },
+                adminPassInputs: {},
+
+                returns: [],
+                suppliers: [],
+                supplierSearch: '',
+                supplierFilterSection: '',
+                supplierModal: { open: false, isEditing: false },
+                supplierForm: { id: null, name: '', email: '', ccEmail: 'merbarcelona@bauhaus.es', contact: '', section: 'Pinturas' },
+                selectedSupplierPreset: '',
+                saveManualSupplierToBook: true,
+
+                search: '',
+                filterSeccion: '',
+                filterGestor: '',
+                filterDestino: '',
+                filterEstado: '',
+
+                // Estado del Calendario y Visor de Fecha
+                calYear: 2025,
+                calMonth: 7,
+                selectedDate: '2025-08-07',
+                visorOpen: true,
+                visorMode: 'date',
+
+                modalOpen: false,
+                isEditing: false,
+                deleteModal: { open: false, id: null, type: 'return' },
+                emailModal: { open: false, sender: '', to: '', cc: '', selectedBookId: '', subject: '', body: '' },
+                toast: { show: false, message: '' },
+
+                form: {
+                    id: null,
+                    seccion: 'Pinturas',
+                    gestor: '',
+                    consecutivo: '',
+                    proveedor: '',
+                    proveedorEmail: '',
+                    solicitado: '',
+                    enviado: '',
+                    aceptacion: '',
+                    entrego: '',
+                    notas: '',
+                    estado: 'Abierto'
+                },
+
+                init() {
+                    const savedDark = localStorage.getItem('bauhaus_dark_mode_807');
+                    if (savedDark === 'true') this.darkMode = true;
+
+                    this.loadLocalCache();
+                    this.selectedLoginSec = this.sectionsConfig[0];
+
+                    const savedSession = sessionStorage.getItem('devoluciones_session_807');
+                    if (savedSession) {
+                        try {
+                            this.currentUser = JSON.parse(savedSession);
+                        } catch (e) {}
+                    }
+
+                    this.checkPendingAlerts();
+
+                    // Conectar con Firebase Firestore cuando el SDK esté listo
+                    if (window.BauhausFirebase) {
+                        this.connectFirebase();
+                    } else {
+                        window.addEventListener('firebase-ready', () => this.connectFirebase());
+                        window.addEventListener('firebase-error', () => {
+                            this.cloudStatus = 'error';
+                        });
+                    }
+                },
+
+                loadLocalCache() {
+                    const savedPasses = localStorage.getItem('devoluciones_section_passwords_807');
+                    if (savedPasses) {
+                        try { this.sectionPasswords = JSON.parse(savedPasses); } catch (e) { this.sectionPasswords = {}; }
+                    }
+
+                    const savedSup = localStorage.getItem('devoluciones_suppliers_book_807');
+                    if (savedSup) {
+                        try { this.suppliers = JSON.parse(savedSup); } catch (e) { this.suppliers = this.getDefaultSuppliers(); }
+                    } else {
+                        this.suppliers = this.getDefaultSuppliers();
+                        localStorage.setItem('devoluciones_suppliers_book_807', JSON.stringify(this.suppliers));
+                    }
+
+                    const saved = localStorage.getItem('devoluciones_app_secciones_v3');
+                    if (saved) {
+                        try { this.returns = JSON.parse(saved); } catch (e) { this.returns = this.getDefaultReturns(); }
+                    } else {
+                        this.returns = this.getDefaultReturns();
+                        localStorage.setItem('devoluciones_app_secciones_v3', JSON.stringify(this.returns));
+                    }
+
+                    this.returns.forEach(r => {
+                        if (r.estado === 'Activo') {
+                            r.estado = r.aceptacion ? 'Completado' : (r.enviado ? 'Pendiente' : 'Abierto');
+                        }
+                    });
+                },
+
+                connectFirebase() {
+                    if (!window.BauhausFirebase) return;
+
+                    // 1. Suscripción en tiempo real a Devoluciones
+                    window.BauhausFirebase.subscribeDoc('returns', (cloudReturns) => {
+                        this.cloudStatus = 'connected';
+                        if (Array.isArray(cloudReturns)) {
+                            this.returns = cloudReturns;
+                            localStorage.setItem('devoluciones_app_secciones_v3', JSON.stringify(this.returns));
+                            this.checkPendingAlerts();
+                        } else {
+                            // Si la nube está vacía, subimos los datos locales iniciales
+                            this.syncDocToCloud('returns', this.returns);
+                        }
+                    }, () => {
+                        this.cloudStatus = 'error';
+                    });
+
+                    // 2. Suscripción en tiempo real a Proveedores
+                    window.BauhausFirebase.subscribeDoc('suppliers', (cloudSuppliers) => {
+                        this.cloudStatus = 'connected';
+                        if (Array.isArray(cloudSuppliers)) {
+                            this.suppliers = cloudSuppliers;
+                            localStorage.setItem('devoluciones_suppliers_book_807', JSON.stringify(this.suppliers));
+                        } else {
+                            this.syncDocToCloud('suppliers', this.suppliers);
+                        }
+                    });
+
+                    // 3. Suscripción en tiempo real a Contraseñas de Secciones
+                    window.BauhausFirebase.subscribeDoc('passwords', (cloudPasswords) => {
+                        this.cloudStatus = 'connected';
+                        if (cloudPasswords && typeof cloudPasswords === 'object') {
+                            this.sectionPasswords = cloudPasswords;
+                            localStorage.setItem('devoluciones_section_passwords_807', JSON.stringify(this.sectionPasswords));
+                        } else {
+                            this.syncDocToCloud('passwords', this.sectionPasswords);
+                        }
+                    });
+                },
+
+                async syncDocToCloud(docName, data) {
+                    if (!window.BauhausFirebase) return;
+                    this.cloudStatus = 'saving';
+                    try {
+                        await window.BauhausFirebase.saveDoc(docName, data);
+                        this.cloudStatus = 'connected';
+                    } catch (err) {
+                        console.error(`Error guardando ${docName} en Firebase:`, err);
+                        this.cloudStatus = 'error';
+                        this.showToast('Guardado en local (Error de red Firebase)');
+                    }
+                },
+
+                checkPendingAlerts() {
+                    if (!this.currentUser) return;
+                    const now = new Date();
+                    const list = this.scopedReturns;
+                    let count = 0;
+                    let sectionsSet = new Set();
+
+                    list.forEach(r => {
+                        if (r.estado === 'Pendiente' && r.solicitado) {
+                            const reqDate = new Date(r.solicitado);
+                            const diffTime = now - reqDate;
+                            const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+                            if (diffDays > 5) {
+                                count++;
+                                if (r.seccion) sectionsSet.add(r.seccion);
+                            }
+                        }
+                    });
+
+                    if (count > 0) {
+                        const secText = sectionsSet.size > 0 ? ` (${Array.from(sectionsSet).join(', ')})` : '';
+                        this.pushAlerts.message = `¡Atención! Hay ${count} devolución(es) pendiente(s) con más de 5 días desde su solicitud${secText}.`;
+                        this.pushAlerts.show = true;
+                    } else {
+                        this.pushAlerts.show = false;
+                    }
+                },
+
+                toggleDarkMode() {
+                    this.darkMode = !this.darkMode;
+                    localStorage.setItem('bauhaus_dark_mode_807', this.darkMode);
+                },
+
+                get pageTitle() {
+                    if (this.activeTab === 'completadas') return 'DEVOLUCIONES COMPLETADAS';
+                    if (this.activeTab === 'listado') return 'LISTADO DE DEVOLUCIONES';
+                    if (this.activeTab === 'proveedores') return 'PROVEEDORES Y DEVOLUCIONES';
+                    if (this.activeTab === 'admin_control') return this.isAdmin ? 'CONTROL DE SECCIONES' : 'SEGURIDAD DE SECCIÓN';
+                    return 'LISTADO DE DEVOLUCIONES';
+                },
+
+                // =============================================================
+                // GESTIÓN DE PROVEEDORES Y DEVOLUCIONES
+                // =============================================================
+                getDefaultSuppliers() {
+                    return [
+                        { id: 1, name: 'AC MARCA', email: 'soporte@acmarca.example', ccEmail: 'merbarcelona@bauhaus.es', contact: 'Dpto. Postventa', section: 'Pinturas' },
+                        { id: 2, name: 'AKZO NOBEL', email: 'soporte@akzonobel.example', ccEmail: 'merbarcelona@bauhaus.es', contact: 'Atención Comercial', section: 'Pinturas' },
+                        { id: 3, name: 'AMORIM', email: 'logistica@amorim.example', ccEmail: 'merbarcelona@bauhaus.es', contact: 'Devoluciones España', section: 'Pinturas' },
+                        { id: 4, name: 'BOSCH HERRAMIENTAS', email: 'sat.bosch@bosch.example', ccEmail: 'merbarcelona@bauhaus.es', contact: 'Servicio Técnico RMA', section: 'Maquinaria' },
+                        { id: 5, name: 'CINTACOR STOR PLANET', email: 'atencion@cintacor.example', ccEmail: 'merbarcelona@bauhaus.es', contact: 'Pedidos y Abonos', section: 'Pinturas' },
+                        { id: 6, name: 'CIRET', email: 'atencion@ciret.example', ccEmail: 'merbarcelona@bauhaus.es', contact: 'Dpto. Logística', section: 'Pinturas' },
+                        { id: 7, name: 'COLORIFICIO CENTRALE', email: 'export@colorificio.example', ccEmail: 'merbarcelona@bauhaus.es', contact: 'Export Desk', section: 'Pinturas' },
+                        { id: 8, name: 'CURVER', email: 'logistica@curver.example', ccEmail: 'merbarcelona@bauhaus.es', contact: 'Incidencias Transporte', section: 'Ordenación' },
+                        { id: 9, name: 'DUPLI COLOR AEROSOLS', email: 'sat@duplicolor.example', ccEmail: 'merbarcelona@bauhaus.es', contact: 'Calidad y Devoluciones', section: 'Pinturas' },
+                        { id: 10, name: 'FINSA', email: 'reclamaciones@finsa.example', ccEmail: 'merbarcelona@bauhaus.es', contact: 'Suministros Madera', section: 'Maderas' },
+                        { id: 11, name: 'FLEUR', email: 'pedidos@fleurpaint.example', ccEmail: 'merbarcelona@bauhaus.es', contact: 'Administración', section: 'Pinturas' },
+                        { id: 12, name: 'GARDENA', email: 'atencion@gardena.example', ccEmail: 'merbarcelona@bauhaus.es', contact: 'Postventa Jardín', section: 'Jardín' },
+                        { id: 13, name: 'GROHE', email: 'garantias@grohe.example', ccEmail: 'merbarcelona@bauhaus.es', contact: 'Garantías Sanitarios', section: 'Sanitarios' },
+                        { id: 14, name: 'JOTUN', email: 'logistica@jotun.example', ccEmail: 'merbarcelona@bauhaus.es', contact: 'Centro Distribución', section: 'Pinturas' },
+                        { id: 15, name: 'KOOPMAN', email: 'contacto@koopman.example', ccEmail: 'merbarcelona@bauhaus.es', contact: 'Customer Care', section: 'General' },
+                        { id: 16, name: 'MARCO MUEBLE', email: 'info@marcomueble.example', ccEmail: 'merbarcelona@bauhaus.es', contact: 'Oficina Central', section: 'Pinturas' },
+                        { id: 17, name: 'ROCA SANITARIO', email: 'postventa@roca.example', ccEmail: 'merbarcelona@bauhaus.es', contact: 'Logística Inversa', section: 'Sanitarios' },
+                        { id: 18, name: 'SCHNEIDER ELECTRIC', email: 'devoluciones@schneider.example', ccEmail: 'merbarcelona@bauhaus.es', contact: 'Portal RMA', section: 'Electricidad' },
+                        { id: 19, name: 'SIMON', email: 'sat@simon.example', ccEmail: 'merbarcelona@bauhaus.es', contact: 'Atención al Distribuidor', section: 'Electricidad' },
+                        { id: 20, name: 'STANLEY BLACK & DECKER', email: 'soporte@stanley.example', ccEmail: 'merbarcelona@bauhaus.es', contact: 'Devoluciones Ferretería', section: 'Ferretería' },
+                        { id: 21, name: 'VERSA', email: 'devoluciones@versa.example', ccEmail: 'merbarcelona@bauhaus.es', contact: 'Dpto. Devoluciones', section: 'General' }
+                    ];
+                },
+                saveSuppliers() {
+                    localStorage.setItem('devoluciones_suppliers_book_807', JSON.stringify(this.suppliers));
+                    this.syncDocToCloud('suppliers', this.suppliers);
+                },
+                get sortedSuppliers() {
+                    return [...this.suppliers].sort((a, b) => a.name.localeCompare(b.name));
+                },
+                get filteredSuppliers() {
+                    const q = this.supplierSearch.toLowerCase().trim();
+                    return this.sortedSuppliers.filter(s => {
+                        const matchQuery = !q ||
+                            s.name.toLowerCase().includes(q) ||
+                            s.email.toLowerCase().includes(q) ||
+                            (s.ccEmail && s.ccEmail.toLowerCase().includes(q)) ||
+                            (s.contact && s.contact.toLowerCase().includes(q));
+                        const matchSec = !this.supplierFilterSection || (s.section || 'General') === this.supplierFilterSection;
+                        return matchQuery && matchSec;
+                    });
+                },
+                openSupplierModal(sup = null) {
+                    if (sup) {
+                        this.supplierModal.isEditing = true;
+                        this.supplierForm = { ...sup };
+                    } else {
+                        this.supplierModal.isEditing = false;
+                        const defaultSec = (this.currentUser && !this.isAdmin) ? this.currentUser.name : 'Pinturas';
+                        this.supplierForm = { id: null, name: '', email: '', ccEmail: 'merbarcelona@bauhaus.es', contact: '', section: defaultSec };
+                    }
+                    this.supplierModal.open = true;
+                },
+                saveSupplier() {
+                    const cleanName = this.supplierForm.name.trim().toUpperCase();
+                    const cleanEmail = this.supplierForm.email.trim();
+                    if (!cleanName || !cleanEmail) return;
+
+                    if (this.supplierModal.isEditing) {
+                        const idx = this.suppliers.findIndex(s => s.id === this.supplierForm.id);
+                        if (idx !== -1) {
+                            this.suppliers[idx] = { ...this.supplierForm, name: cleanName, email: cleanEmail };
+                        }
+                        this.showToast(`Proveedor ${cleanName} actualizado en la nube`);
+                    } else {
+                        const newId = this.suppliers.length > 0 ? Math.max(...this.suppliers.map(s => s.id)) + 1 : 1;
+                        this.suppliers.push({
+                            ...this.supplierForm,
+                            id: newId,
+                            name: cleanName,
+                            email: cleanEmail,
+                            ccEmail: this.supplierForm.ccEmail ? this.supplierForm.ccEmail.trim() : 'merbarcelona@bauhaus.es'
+                        });
+                        this.showToast(`Proveedor ${cleanName} guardado en la nube`);
+                    }
+                    this.saveSuppliers();
+                    this.supplierModal.open = false;
+                },
+                deleteSupplier(id) {
+                    this.deleteModal.id = id;
+                    this.deleteModal.type = 'supplier';
+                    this.deleteModal.open = true;
+                },
+                createReturnWithSupplier(sup) {
+                    this.openModal();
+                    this.selectedSupplierPreset = String(sup.id);
+                    this.form.proveedor = sup.name;
+                    this.form.proveedorEmail = sup.email;
+                },
+                onSelectSupplierPreset() {
+                    if (!this.selectedSupplierPreset) {
+                        this.form.proveedor = '';
+                        this.form.proveedorEmail = '';
+                        return;
+                    }
+                    if (this.selectedSupplierPreset === '__manual__') {
+                        this.form.proveedor = '';
+                        this.form.proveedorEmail = '';
+                        this.saveManualSupplierToBook = true;
+                        return;
+                    }
+                    const found = this.suppliers.find(s => String(s.id) === String(this.selectedSupplierPreset));
+                    if (found) {
+                        this.form.proveedor = found.name;
+                        this.form.proveedorEmail = found.email;
+                    }
+                },
+                findSupplierByName(name) {
+                    if (!name) return null;
+                    const upper = name.trim().toUpperCase();
+                    return this.suppliers.find(s => s.name.trim().toUpperCase() === upper) || null;
+                },
+
+                saveSectionPasswords() {
+                    localStorage.setItem('devoluciones_section_passwords_807', JSON.stringify(this.sectionPasswords));
+                    this.syncDocToCloud('passwords', this.sectionPasswords);
+                },
+                hasSectionPassword(secId) {
+                    return Boolean(this.sectionPasswords && this.sectionPasswords[secId] && this.sectionPasswords[secId].trim() !== '');
+                },
+                get departmentSections() {
+                    return this.sectionsConfig.filter(s => s.id !== 'admin');
+                },
+                get isAdmin() {
+                    return this.currentUser && this.currentUser.id === 'admin';
+                },
+                selectLoginSection(sec) {
+                    this.selectedLoginSec = sec;
+                    this.loginPin = '';
+                    this.loginNewPass = '';
+                    this.loginConfirmPass = '';
+                    this.loginError = '';
+                },
+                performLogin() {
+                    if (!this.selectedLoginSec) {
+                        this.loginError = 'Selecciona una sección.';
+                        return;
+                    }
+
+                    if (this.selectedLoginSec.id === 'admin') {
+                        if (this.loginPin.trim() !== 'bcn807') {
+                            this.loginError = 'PIN de Administrador incorrecto.';
+                            return;
+                        }
+                        this.completeUserLogin(this.selectedLoginSec);
+                        return;
+                    }
+
+                    const secId = this.selectedLoginSec.id;
+
+                    if (!this.hasSectionPassword(secId)) {
+                        const newP = this.loginNewPass.trim();
+                        const confP = this.loginConfirmPass.trim();
+                        if (newP.length < 4) {
+                            this.loginError = 'La contraseña debe tener al menos 4 caracteres.';
+                            return;
+                        }
+                        if (newP !== confP) {
+                            this.loginError = 'Las contraseñas no coinciden.';
+                            return;
+                        }
+                        this.sectionPasswords[secId] = newP;
+                        this.saveSectionPasswords();
+                        this.completeUserLogin(this.selectedLoginSec);
+                        this.showToast(`Contraseña creada en la nube para ${this.selectedLoginSec.name}`);
+                        return;
+                    }
+
+                    if (this.loginPin !== this.sectionPasswords[secId]) {
+                        this.loginError = `Contraseña incorrecta para ${this.selectedLoginSec.name}.`;
+                        return;
+                    }
+
+                    this.completeUserLogin(this.selectedLoginSec);
+                    this.showToast(`Sesión iniciada: ${this.currentUser.name}`);
+                },
+                completeUserLogin(sec) {
+                    this.currentUser = { ...sec };
+                    sessionStorage.setItem('devoluciones_session_807', JSON.stringify(this.currentUser));
+                    this.resetFilters();
+                    this.activeTab = 'listado';
+                    this.loginPin = '';
+                    this.loginNewPass = '';
+                    this.loginConfirmPass = '';
+                    this.loginError = '';
+                    this.syncCalendarToLatestDate();
+                    this.checkPendingAlerts();
+                },
+                submitSectionPasswordChange() {
+                    if (!this.currentUser || this.isAdmin) return;
+                    const secId = this.currentUser.id;
+                    const stored = this.sectionPasswords[secId] || '';
+
+                    if (this.changePassModal.currentPass !== stored) {
+                        this.changePassModal.error = 'La contraseña actual no es correcta.';
+                        return;
+                    }
+                    const newP = this.changePassModal.newPass.trim();
+                    if (newP.length < 4) {
+                        this.changePassModal.error = 'La nueva contraseña debe tener al menos 4 caracteres.';
+                        return;
+                    }
+                    if (newP !== this.changePassModal.confirmPass.trim()) {
+                        this.changePassModal.error = 'La confirmación no coincide.';
+                        return;
+                    }
+
+                    this.sectionPasswords[secId] = newP;
+                    this.saveSectionPasswords();
+                    this.changePassModal = { currentPass: '', newPass: '', confirmPass: '', error: '' };
+                    this.showToast(`Contraseña actualizada en la nube para ${this.currentUser.name}`);
+                },
+                adminSetSectionPassword(secId, secName) {
+                    if (!this.isAdmin) return;
+                    const val = (this.adminPassInputs[secId] || '').trim();
+                    if (val.length < 4) {
+                        this.showToast('Mínimo 4 caracteres para la contraseña');
+                        return;
+                    }
+                    this.sectionPasswords[secId] = val;
+                    this.saveSectionPasswords();
+                    this.adminPassInputs[secId] = '';
+                    this.showToast(`Contraseña guardada en la nube para ${secName}`);
+                },
+                adminResetSectionPassword(secId, secName) {
+                    if (!this.isAdmin) return;
+                    delete this.sectionPasswords[secId];
+                    this.saveSectionPasswords();
+                    this.adminPassInputs[secId] = '';
+                    this.showToast(`Clave de ${secName} restablecida`);
+                },
+                logout() {
+                    this.currentUser = null;
+                    sessionStorage.removeItem('devoluciones_session_807');
+                    this.loginPin = '';
+                    this.loginNewPass = '';
+                    this.loginConfirmPass = '';
+                    this.loginError = '';
+                    this.pushAlerts.show = false;
+                    this.resetFilters();
+                },
+
+                getDefaultReturns() {
+                    return [
+                        // PINTURAS
+                        { id: 1, seccion: 'Pinturas', gestor: '', consecutivo: '253243', proveedor: 'KOOPMAN', proveedorEmail: 'contacto@koopman.example', solicitado: '2025-04-23', enviado: '2025-04-25', aceptacion: '', entrego: '', notas: '', estado: 'Abierto' },
+                        { id: 2, seccion: 'Pinturas', gestor: '', consecutivo: '253217', proveedor: 'VERSA', proveedorEmail: 'devoluciones@versa.example', solicitado: '2025-04-23', enviado: '2025-04-26', aceptacion: '2025-05-03', entrego: 'DESTRUCCIÓN', notas: '', estado: 'Completado' },
+                        { id: 3, seccion: 'Pinturas', gestor: '', consecutivo: '253276', proveedor: 'CINTACOR STOR PLANET', proveedorEmail: 'atencion@cintacor.example', solicitado: '2025-04-23', enviado: '2025-04-26', aceptacion: '2025-04-26', entrego: 'DESTRUCCIÓN', notas: '', estado: 'Completado' },
+                        { id: 4, seccion: 'Pinturas', gestor: '', consecutivo: '253304', proveedor: 'MARCO MUEBLE', proveedorEmail: 'info@marcomueble.example', solicitado: '2025-04-23', enviado: '2025-04-26', aceptacion: '', entrego: '', notas: '', estado: 'Pendiente' },
+                        { id: 5, seccion: 'Pinturas', gestor: '', consecutivo: '248523', proveedor: 'AKZO NOBEL', proveedorEmail: 'soporte@akzonobel.example', solicitado: '2025-04-22', enviado: '2025-04-22', aceptacion: '2025-04-24', entrego: 'DESTRUCCIÓN', notas: '', estado: 'Completado' },
+                        { id: 6, seccion: 'Pinturas', gestor: '', consecutivo: '231297', proveedor: 'COLORIFICIO CENTRALE', proveedorEmail: 'export@colorificio.example', solicitado: '2025-03-25', enviado: '2025-03-25', aceptacion: '', entrego: '', notas: '', estado: 'Pendiente' },
+                        { id: 7, seccion: 'Pinturas', gestor: '', consecutivo: '253332', proveedor: 'JOTUN', proveedorEmail: 'logistica@jotun.example', solicitado: '2025-04-23', enviado: '2025-04-26', aceptacion: '2025-04-28', entrego: 'DESTRUCCIÓN', notas: '', estado: 'Completado' },
+                        { id: 8, seccion: 'Pinturas', gestor: '', consecutivo: '260906', proveedor: 'AKZO NOBEL', proveedorEmail: 'soporte@akzonobel.example', solicitado: '2025-05-05', enviado: '2025-05-05', aceptacion: '2025-05-05', entrego: 'DEVOLUCIÓN', notas: '', estado: 'Completado' },
+                        { id: 9, seccion: 'Pinturas', gestor: 'alba', consecutivo: '336588', proveedor: 'CINTACOR STOR PLANET', proveedorEmail: 'atencion@cintacor.example', solicitado: '2025-08-06', enviado: '', aceptacion: '', entrego: '', notas: 'Pendiente confirmación de recogida', estado: 'Pendiente' },
+                        { id: 10, seccion: 'Pinturas', gestor: 'alba', consecutivo: '338153', proveedor: 'AMORIM', proveedorEmail: 'logistica@amorim.example', solicitado: '2025-08-06', enviado: '2025-08-07', aceptacion: '2025-08-08', entrego: 'DESTRUCCIÓN', notas: 'Autorizada destrucción en tienda', estado: 'Completado' },
+                        { id: 11, seccion: 'Pinturas', gestor: 'alba', consecutivo: '338166', proveedor: 'DUPLI COLOR AEROSOLS', proveedorEmail: 'sat@duplicolor.example', solicitado: '2025-08-06', enviado: '2025-08-07', aceptacion: '2025-08-08', entrego: 'DESTRUCCIÓN', notas: 'Botes dañados en recepción', estado: 'Completado' },
+                        { id: 12, seccion: 'Pinturas', gestor: 'alba', consecutivo: '338190', proveedor: 'FLEUR', proveedorEmail: 'pedidos@fleurpaint.example', solicitado: '2025-08-06', enviado: '2025-08-07', aceptacion: '', entrego: '', notas: 'Esperando abono del proveedor', estado: 'Abierto' },
+                        { id: 13, seccion: 'Pinturas', gestor: 'alba', consecutivo: '338200', proveedor: 'CIRET', proveedorEmail: 'atencion@ciret.example', solicitado: '2025-08-06', enviado: '2025-08-07', aceptacion: '2025-08-08', entrego: 'DESTRUCCIÓN', notas: '', estado: 'Completado' },
+                        { id: 14, seccion: 'Pinturas', gestor: 'miguel', consecutivo: '342709', proveedor: 'AC MARCA', proveedorEmail: 'soporte@acmarca.example', solicitado: '2025-08-12', enviado: '2025-08-13', aceptacion: '', entrego: '', notas: 'Plazo vencido sin respuesta', estado: 'caducado' },
+
+                        // ELECTRICIDAD
+                        { id: 15, seccion: 'Electricidad', gestor: 'carlos', consecutivo: '410215', proveedor: 'SCHNEIDER ELECTRIC', proveedorEmail: 'devoluciones@schneider.example', solicitado: '2025-08-07', enviado: '2025-08-08', aceptacion: '2025-08-10', entrego: 'DEVOLUCIÓN', notas: 'Portes pagados por proveedor', estado: 'Completado' },
+                        { id: 16, seccion: 'Electricidad', gestor: 'carlos', consecutivo: '410588', proveedor: 'SIMON', proveedorEmail: 'sat@simon.example', solicitado: '2025-08-14', enviado: '', aceptacion: '', entrego: '', notas: 'Pendiente foto embalaje', estado: 'Pendiente' },
+
+                        // SANITARIOS
+                        { id: 17, seccion: 'Sanitarios', gestor: 'laura', consecutivo: '520114', proveedor: 'ROCA SANITARIO', proveedorEmail: 'postventa@roca.example', solicitado: '2025-08-07', enviado: '2025-08-09', aceptacion: '2025-08-11', entrego: 'DEVOLUCIÓN', notas: 'Recogida en muelle 2', estado: 'Abierto' },
+                        { id: 18, seccion: 'Sanitarios', gestor: 'laura', consecutivo: '520390', proveedor: 'GROHE', proveedorEmail: 'garantias@grohe.example', solicitado: '2025-07-11', enviado: '2025-07-12', aceptacion: '', entrego: '', notas: 'Fuera de plazo', estado: 'caducado' },
+
+                        // MADERAS
+                        { id: 19, seccion: 'Maderas', gestor: 'javier', consecutivo: '615002', proveedor: 'FINSA', proveedorEmail: 'reclamaciones@finsa.example', solicitado: '2025-08-07', enviado: '2025-08-08', aceptacion: '2025-08-12', entrego: 'DESTRUCCIÓN', notas: 'Tableros golpeados', estado: 'Completado' },
+
+                        // FERRETERÍA
+                        { id: 20, seccion: 'Ferretería', gestor: 'elena', consecutivo: '718920', proveedor: 'STANLEY BLACK & DECKER', proveedorEmail: 'soporte@stanley.example', solicitado: '2025-08-14', enviado: '2025-08-15', aceptacion: '', entrego: '', notas: 'Portes debidos', estado: 'Pendiente' },
+
+                        // MAQUINARIA
+                        { id: 21, seccion: 'Maquinaria', gestor: 'david', consecutivo: '812440', proveedor: 'BOSCH HERRAMIENTAS', proveedorEmail: 'sat.bosch@bosch.example', solicitado: '2025-08-07', enviado: '2025-08-08', aceptacion: '2025-08-11', entrego: 'DEVOLUCIÓN', notas: 'Con nº RMA autorizado', estado: 'Abierto' },
+
+                        // JARDÍN
+                        { id: 22, seccion: 'Jardín', gestor: 'sofia', consecutivo: '904312', proveedor: 'GARDENA', proveedorEmail: 'atencion@gardena.example', solicitado: '2025-08-14', enviado: '2025-08-15', aceptacion: '2025-08-18', entrego: 'DESTRUCCIÓN', notas: '', estado: 'Completado' },
+
+                        // ORDENACIÓN
+                        { id: 23, seccion: 'Ordenación', gestor: 'pablo', consecutivo: '955108', proveedor: 'CURVER', proveedorEmail: 'logistica@curver.example', solicitado: '2025-08-18', enviado: '', aceptacion: '', entrego: '', notas: 'Cajas rotas en transporte', estado: 'Pendiente' }
+                    ];
+                },
+                saveToStorage() {
+                    localStorage.setItem('devoluciones_app_secciones_v3', JSON.stringify(this.returns));
+                    this.syncDocToCloud('returns', this.returns);
+                    this.checkPendingAlerts();
+                },
+                showToast(msg) {
+                    this.toast.message = msg;
+                    this.toast.show = true;
+                    setTimeout(() => {
+                        this.toast.show = false;
+                    }, 3000);
+                },
+
+                // Registros visibles según el rol conectado
+                get scopedReturns() {
+                    if (!this.currentUser) return [];
+                    if (this.isAdmin) return this.returns;
+                    return this.returns.filter(r => (r.seccion || 'Pinturas') === this.currentUser.name);
+                },
+
+                get dashboardScopedReturns() {
+                    if (this.isAdmin && this.filterSeccion) {
+                        return this.scopedReturns.filter(r => (r.seccion || 'Pinturas') === this.filterSeccion);
+                    }
+                    return this.scopedReturns;
+                },
+
+                countScopedStatus(status) {
+                    return this.dashboardScopedReturns.filter(r => r.estado === status).length;
+                },
+                countCompletedOrActive() {
+                    return this.dashboardScopedReturns.filter(r => r.estado === 'Completado' || r.estado === 'Activo').length;
+                },
+                countExpiredOrDestruction() {
+                    return this.dashboardScopedReturns.filter(r => r.estado === 'caducado' || r.entrego === 'DESTRUCCIÓN').length;
+                },
+
+                syncCalendarToLatestDate() {
+                    const list = this.dashboardScopedReturns;
+                    const dates = [];
+                    list.forEach(r => {
+                        if (r.solicitado) dates.push(r.solicitado);
+                        if (r.enviado) dates.push(r.enviado);
+                        if (r.aceptacion) dates.push(r.aceptacion);
+                    });
+                    if (dates.length > 0) {
+                        dates.sort();
+                        const target = dates.includes('2025-08-07') ? '2025-08-07' : dates[dates.length - 1];
+                        this.selectedDate = target;
+                        const parts = target.split('-');
+                        this.calYear = parseInt(parts[0], 10);
+                        this.calMonth = parseInt(parts[1], 10) - 1;
+                    }
+                    this.visorMode = 'date';
+                    this.visorOpen = true;
+                },
+
+                markAsCompleted(item) {
+                    const idx = this.returns.findIndex(r => r.id === item.id);
+                    if (idx !== -1) {
+                        this.returns[idx].estado = 'Completado';
+                        this.saveToStorage();
+                        this.showToast(`Devolución #${item.consecutivo} finalizada`);
+                    }
+                },
+
+                // =============================================================
+                // FILTROS Y ACCIONES DE TABLA
+                // =============================================================
+                get modeReturns() {
+                    const done = this.activeTab === 'completadas';
+                    return this.scopedReturns.filter(r => done ? r.estado === 'Completado' : r.estado !== 'Completado');
+                },
+                get tableColumns() {
+                    const cols = [];
+                    if (this.isAdmin) cols.push({ key: 'seccion', label: 'Sección' });
+                    cols.push(
+                        { key: 'gestor', label: 'Gestor' },
+                        { key: 'consecutivo', label: 'Nº Consecutivo' },
+                        { key: 'proveedor', label: 'Proveedor' },
+                        { key: 'solicitado', label: 'Pantallazo Solicitado', center: true },
+                        { key: 'enviado', label: 'Pantallazo Enviado', center: true },
+                        { key: 'aceptacion', label: 'Aceptación Devolución', center: true },
+                        { key: 'entrego', label: 'Entrega / Destino' },
+                        { key: 'notas', label: 'Notas (Portes)' },
+                        { key: 'estado', label: 'Estado', center: true }
+                    );
+                    return cols;
+                },
+                get estadoFilterOptions() {
+                    const all = [
+                        { v: 'Abierto', l: 'ABIERTO (AZUL)' },
+                        { v: 'Pendiente', l: 'PENDIENTE (AMARILLO)' },
+                        { v: 'Completado', l: 'COMPLETADO (VERDE)' },
+                        { v: 'caducado', l: 'CADUCADO (ROJO)' }
+                    ];
+                    return this.activeTab === 'completadas' ? all.filter(o => o.v === 'Completado') : all.filter(o => o.v !== 'Completado');
+                },
+                sortBy(key) {
+                    if (this.sortKey === key) {
+                        this.sortDir = this.sortDir === 'asc' ? 'desc' : 'asc';
+                    } else {
+                        this.sortKey = key;
+                        this.sortDir = 'asc';
+                    }
+                },
+                sortList(list) {
+                    if (!this.sortKey) return list;
+                    const k = this.sortKey;
+                    const dir = this.sortDir === 'asc' ? 1 : -1;
+                    const val = (r) => String((k === 'seccion' ? (r.seccion || 'Pinturas') : r[k]) || '').trim();
+                    return [...list].sort((a, b) => {
+                        const va = val(a), vb = val(b);
+                        if (!va && !vb) return 0;
+                        if (!va) return 1;
+                        if (!vb) return -1;
+                        return va.localeCompare(vb, 'es', { numeric: true, sensitivity: 'base' }) * dir;
+                    });
+                },
+                autoStatus() {
+                    if (this.form.aceptacion) this.form.estado = 'Completado';
+                    else if (this.form.enviado) this.form.estado = 'Pendiente';
+                    else if (this.form.solicitado) this.form.estado = 'Abierto';
+                },
+                todayStr() {
+                    const d = new Date();
+                    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+                },
+                downloadEml() {
+                    const b64 = (s) => btoa(unescape(encodeURIComponent(s))).replace(/(.{76})/g, '$1\r\n');
+                    const m = this.emailModal;
+                    const lines = [];
+                    lines.push('X-Unsent: 1');
+                    lines.push('To: ' + m.to);
+                    if (m.cc) lines.push('Cc: ' + m.cc);
+                    lines.push('Subject: =?UTF-8?B?' + btoa(unescape(encodeURIComponent(m.subject))) + '?=');
+                    lines.push('MIME-Version: 1.0');
+                    lines.push('Content-Type: text/plain; charset=UTF-8');
+                    lines.push('Content-Transfer-Encoding: base64');
+                    lines.push('');
+                    lines.push(b64(m.body.replace(/\r?\n/g, '\r\n')));
+                    const blob = new Blob([lines.join('\r\n')], { type: 'message/rfc822' });
+                    const a = document.createElement('a');
+                    a.href = URL.createObjectURL(blob);
+                    a.download = 'devolucion.eml';
+                    document.body.appendChild(a);
+                    a.click();
+                    a.remove();
+                    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+                    this.showToast('Borrador .eml descargado');
+                },
+                get uniqueGestores() {
+                    const gestores = this.scopedReturns.map(r => r.gestor).filter(g => g && g.trim() !== '');
+                    return [...new Set(gestores)].sort();
+                },
+                get filteredReturns() {
+                    const list = this.modeReturns.filter(item => {
+                        const q = this.search.toLowerCase();
+                        const matchesSearch = !this.search ||
+                            (item.consecutivo && item.consecutivo.toLowerCase().includes(q)) ||
+                            (item.proveedor && item.proveedor.toLowerCase().includes(q)) ||
+                            (item.gestor && item.gestor.toLowerCase().includes(q));
+
+                        const matchesSeccion = !this.isAdmin || !this.filterSeccion || (item.seccion || 'Pinturas') === this.filterSeccion;
+                        const matchesGestor = !this.filterGestor || item.gestor === this.filterGestor;
+                        const matchesDestino = !this.filterDestino || item.entrego === this.filterDestino;
+                        const matchesEstado = !this.filterEstado || item.estado === this.filterEstado;
+
+                        return matchesSearch && matchesSeccion && matchesGestor && matchesDestino && matchesEstado;
+                    });
+                    return this.sortList(list);
+                },
+                countBySection(secName) {
+                    return this.returns.filter(r => (r.seccion || 'Pinturas') === secName).length;
+                },
+                getSectionConfigByName(seccionName) {
+                    return this.sectionsConfig.find(s => s.name === seccionName) || this.sectionsConfig[0];
+                },
+                getSenderEmailForSection(seccionName) {
+                    const found = this.sectionsConfig.find(s => s.name === seccionName);
+                    return found ? found.email : 'pinturas807@bauhaus.es';
+                },
+                openEmailModal(item) {
+                    const seccionItem = item.seccion || (this.currentUser && !this.isAdmin ? this.currentUser.name : 'Pinturas');
+                    const senderEmail = this.getSenderEmailForSection(seccionItem);
+                    const bookSup = this.findSupplierByName(item.proveedor);
+
+                    this.emailModal.sender = senderEmail;
+                    this.emailModal.selectedBookId = bookSup ? String(bookSup.id) : '';
+                    this.emailModal.to = (bookSup && bookSup.email) ? bookSup.email : (item.proveedorEmail || 'proveedor@ejemplo.com');
+                    this.emailModal.cc = (bookSup && bookSup.ccEmail) ? bookSup.ccEmail : 'merbarcelona@bauhaus.es';
+                    this.emailModal.subject = `Gestión de Devolución [${seccionItem}] - Consecutivo #${item.consecutivo} - ${item.proveedor}`;
+                    const gestorNombre = (item.gestor || '').trim().split(/\s+/).filter(Boolean).map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ');
+                    this.emailModal.body = `Estimado equipo de ${item.proveedor},
+
+Nos ponemos en contacto desde ${senderEmail} (Sección ${seccionItem} - Bauhaus 807) en relación con la siguiente devolución:
+
+- Sección: ${seccionItem}
+- Nº Consecutivo: ${item.consecutivo}
+- Notas / Portes: ${item.notas ? item.notas : 'Sin observaciones'}
+
+
+Atentamente,
+${gestorNombre ? gestorNombre + '\n' : ''}Departamento de ${seccionItem} - Bauhaus
+Remitente: ${senderEmail}`;
+
+                    this.emailModal.open = true;
+                },
+                applyBookSupplierToEmail() {
+                    if (!this.emailModal.selectedBookId) return;
+                    const sup = this.suppliers.find(s => String(s.id) === String(this.emailModal.selectedBookId));
+                    if (sup) {
+                        this.emailModal.to = sup.email;
+                        this.emailModal.cc = sup.ccEmail || 'merbarcelona@bauhaus.es';
+                    }
+                },
+                launchMailto() {
+                    const subject = encodeURIComponent(this.emailModal.subject);
+                    const body = encodeURIComponent(this.emailModal.body);
+                    const ccParam = this.emailModal.cc ? `&cc=${encodeURIComponent(this.emailModal.cc)}` : '';
+                    window.location.href = `mailto:${this.emailModal.to}?subject=${subject}${ccParam}&body=${body}`;
+                    this.showToast(`Abriendo correo desde ${this.emailModal.sender}`);
+                    this.emailModal.open = false;
+                },
+                copyEmailContent() {
+                    const ccLine = this.emailModal.cc ? `\nCC: ${this.emailModal.cc}` : '';
+                    const text = `De: ${this.emailModal.sender}\nPara: ${this.emailModal.to}${ccLine}\nAsunto: ${this.emailModal.subject}\n\n${this.emailModal.body}`;
+                    const tempArea = document.createElement('textarea');
+                    tempArea.value = text;
+                    document.body.appendChild(tempArea);
+                    tempArea.select();
+                    document.execCommand('copy');
+                    document.body.removeChild(tempArea);
+                    this.showToast('Texto copiado al portapapeles');
+                },
+                openModal() {
+                    this.isEditing = false;
+                    const defaultSec = this.isAdmin
+                        ? (this.filterSeccion || 'Pinturas')
+                        : (this.currentUser ? this.currentUser.name : 'Pinturas');
+
+                    this.selectedSupplierPreset = '';
+                    this.saveManualSupplierToBook = true;
+                    this.form = {
+                        id: null,
+                        seccion: defaultSec,
+                        gestor: '',
+                        consecutivo: '',
+                        proveedor: '',
+                        proveedorEmail: '',
+                        solicitado: this.todayStr(),
+                        enviado: '',
+                        aceptacion: '',
+                        entrego: '',
+                        notas: '',
+                        estado: 'Abierto'
+                    };
+                    this.modalOpen = true;
+                },
+                editReturn(item) {
+                    this.isEditing = true;
+                    this.form = { seccion: 'Pinturas', ...item };
+                    const matched = this.findSupplierByName(item.proveedor);
+                    if (matched) {
+                        this.selectedSupplierPreset = String(matched.id);
+                        if (!this.form.proveedorEmail) this.form.proveedorEmail = matched.email;
+                    } else {
+                        this.selectedSupplierPreset = '__manual__';
+                        this.saveManualSupplierToBook = false;
+                    }
+                    this.modalOpen = true;
+                },
+                closeModal() {
+                    this.modalOpen = false;
+                },
+                saveReturn() {
+                    if (!this.isAdmin && this.currentUser) {
+                        this.form.seccion = this.currentUser.name;
+                    }
+
+                    const cleanProv = (this.form.proveedor || '').trim().toUpperCase();
+                    if (!cleanProv) {
+                        this.showToast('Selecciona o escribe un proveedor');
+                        return;
+                    }
+                    this.form.proveedor = cleanProv;
+
+                    if (this.selectedSupplierPreset === '__manual__' && this.saveManualSupplierToBook && this.form.proveedorEmail) {
+                        const existing = this.findSupplierByName(cleanProv);
+                        if (!existing) {
+                            const newSupId = this.suppliers.length > 0 ? Math.max(...this.suppliers.map(s => s.id)) + 1 : 1;
+                            this.suppliers.push({
+                                id: newSupId,
+                                name: cleanProv,
+                                email: this.form.proveedorEmail.trim(),
+                                ccEmail: 'merbarcelona@bauhaus.es',
+                                contact: '',
+                                section: this.form.seccion || 'General'
+                            });
+                            this.saveSuppliers();
+                        }
+                    }
+
+                    if (this.isEditing) {
+                        const index = this.returns.findIndex(r => r.id === this.form.id);
+                        if (index !== -1) {
+                            this.returns[index] = { ...this.form };
+                        }
+                        this.showToast('Devolución guardada en la nube');
+                    } else {
+                        const newId = this.returns.length > 0 ? Math.max(...this.returns.map(r => r.id)) + 1 : 1;
+                        const newItem = { ...this.form, id: newId };
+                        this.returns.unshift(newItem);
+                        this.showToast(`Devolución guardada en la nube (${newItem.seccion})`);
+                    }
+                    this.saveToStorage();
+                    this.closeModal();
+                },
+                deleteReturn(id) {
+                    this.deleteModal.id = id;
+                    this.deleteModal.type = 'return';
+                    this.deleteModal.open = true;
+                },
+                confirmDelete() {
+                    if (this.deleteModal.id !== null) {
+                        if (this.deleteModal.type === 'supplier') {
+                            this.suppliers = this.suppliers.filter(s => s.id !== this.deleteModal.id);
+                            this.saveSuppliers();
+                            this.showToast('Proveedor eliminado de la nube');
+                        } else {
+                            this.returns = this.returns.filter(r => r.id !== this.deleteModal.id);
+                            this.saveToStorage();
+                            this.showToast('Registro eliminado de la nube');
+                        }
+                    }
+                    this.deleteModal.open = false;
+                    this.deleteModal.id = null;
+                },
+                resetFilters() {
+                    this.search = '';
+                    this.filterSeccion = '';
+                    this.filterGestor = '';
+                    this.filterDestino = '';
+                    this.filterEstado = '';
+                },
+                exportData() {
+                    const dataToExport = this.filteredReturns;
+                    const fileName = this.isAdmin
+                        ? `devoluciones_${this.filterSeccion || 'todas_secciones'}.json`
+                        : `devoluciones_${this.currentUser.id}.json`;
+
+                    const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(dataToExport, null, 2));
+                    const downloadAnchor = document.createElement('a');
+                    downloadAnchor.setAttribute("href", dataStr);
+                    downloadAnchor.setAttribute("download", fileName.toLowerCase());
+                    document.body.appendChild(downloadAnchor);
+                    downloadAnchor.click();
+                    downloadAnchor.remove();
+                    this.showToast('Datos exportados en JSON');
+                }
+            }
+        }
+    </script>
+</body>
+</html>
